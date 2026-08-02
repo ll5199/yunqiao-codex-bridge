@@ -1,0 +1,792 @@
+//go:build windows
+
+package main
+
+import (
+	"encoding/base64"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"sync"
+	"syscall"
+	"time"
+	"unsafe"
+)
+
+const (
+	appTitle      = "云桥 Codex Bridge"
+	cdpPort       = 9229
+	inspectorPort = 9329
+
+	wmCreate       = 0x0001
+	wmDestroy      = 0x0002
+	wmCommand      = 0x0111
+	wmClose        = 0x0010
+	wmSetFont      = 0x0030
+	wmAppResult    = 0x8001
+	lbAddString    = 0x0180
+	lbReset        = 0x0184
+	lbSetCurSel    = 0x0186
+	swShow         = 5
+	colorWindow    = 5
+	idcArrow       = 32512
+	defaultGUIFont = 17
+
+	wsOverlappedWindow = 0x00CF0000
+	wsVisible          = 0x10000000
+	wsChild            = 0x40000000
+	wsTabStop          = 0x00010000
+	wsVScroll          = 0x00200000
+	wsBorder           = 0x00800000
+	esAutoHScroll      = 0x0080
+	esPassword         = 0x0020
+	lbsNotify          = 0x0001
+
+	controlFetch  = 101
+	controlLaunch = 102
+	controlUpdate = 103
+)
+
+var (
+	user32   = syscall.NewLazyDLL("user32.dll")
+	kernel32 = syscall.NewLazyDLL("kernel32.dll")
+	gdi32    = syscall.NewLazyDLL("gdi32.dll")
+	crypt32  = syscall.NewLazyDLL("crypt32.dll")
+	ole32    = syscall.NewLazyDLL("ole32.dll")
+
+	procRegisterClassExW = user32.NewProc("RegisterClassExW")
+	procCreateWindowExW  = user32.NewProc("CreateWindowExW")
+	procDefWindowProcW   = user32.NewProc("DefWindowProcW")
+	procShowWindow       = user32.NewProc("ShowWindow")
+	procUpdateWindow     = user32.NewProc("UpdateWindow")
+	procGetMessageW      = user32.NewProc("GetMessageW")
+	procTranslateMessage = user32.NewProc("TranslateMessage")
+	procDispatchMessageW = user32.NewProc("DispatchMessageW")
+	procPostQuitMessage  = user32.NewProc("PostQuitMessage")
+	procDestroyWindow    = user32.NewProc("DestroyWindow")
+	procSendMessageW     = user32.NewProc("SendMessageW")
+	procSetWindowTextW   = user32.NewProc("SetWindowTextW")
+	procGetWindowTextW   = user32.NewProc("GetWindowTextW")
+	procGetWindowTextLen = user32.NewProc("GetWindowTextLengthW")
+	procMessageBoxW      = user32.NewProc("MessageBoxW")
+	procEnableWindow     = user32.NewProc("EnableWindow")
+	procPostMessageW     = user32.NewProc("PostMessageW")
+	procLoadCursorW      = user32.NewProc("LoadCursorW")
+	procGetModuleHandleW = kernel32.NewProc("GetModuleHandleW")
+	procGetStockObject   = gdi32.NewProc("GetStockObject")
+	procCryptProtectData = crypt32.NewProc("CryptProtectData")
+	procCryptUnprotect   = crypt32.NewProc("CryptUnprotectData")
+	procLocalFree        = kernel32.NewProc("LocalFree")
+	procCoInitializeEx   = ole32.NewProc("CoInitializeEx")
+	procCoUninitialize   = ole32.NewProc("CoUninitialize")
+	procCoCreateInstance = ole32.NewProc("CoCreateInstance")
+)
+
+type point struct {
+	X int32
+	Y int32
+}
+
+type message struct {
+	HWnd     uintptr
+	Message  uint32
+	WParam   uintptr
+	LParam   uintptr
+	Time     uint32
+	Pt       point
+	LPrivate uint32
+}
+
+type windowClassEx struct {
+	Size       uint32
+	Style      uint32
+	WndProc    uintptr
+	ClsExtra   int32
+	WndExtra   int32
+	Instance   uintptr
+	Icon       uintptr
+	Cursor     uintptr
+	Background uintptr
+	MenuName   *uint16
+	ClassName  *uint16
+	IconSmall  uintptr
+}
+
+type dataBlob struct {
+	Size uint32
+	Data *byte
+}
+
+type guid struct {
+	Data1 uint32
+	Data2 uint16
+	Data3 uint16
+	Data4 [8]byte
+}
+
+type activationManager struct {
+	VTable *activationManagerVTable
+}
+
+type activationManagerVTable struct {
+	QueryInterface      uintptr
+	AddRef              uintptr
+	Release             uintptr
+	ActivateApplication uintptr
+	ActivateForFile     uintptr
+	ActivateForProtocol uintptr
+}
+
+type uiUpdate struct {
+	Status string
+	Models []string
+	Error  error
+	Done   bool
+}
+
+var (
+	mainWindow    uintptr
+	baseEdit      uintptr
+	keyEdit       uintptr
+	modelList     uintptr
+	statusLabel   uintptr
+	fetchButton   uintptr
+	launchButton  uintptr
+	updateButton  uintptr
+	currentModels []string
+	currentConfig appConfig
+	activeProxy   *apiProxy
+	proxyMutex    sync.Mutex
+	updateMutex   sync.Mutex
+	pendingUpdate uiUpdate
+)
+
+func main() {
+	runtime.LockOSThread()
+	loadSavedConfiguration()
+
+	instance, _, _ := procGetModuleHandleW.Call(0)
+	className := utf16("YunqiaoCodexBridgeWindow")
+	cursor, _, _ := procLoadCursorW.Call(0, idcArrow)
+	class := windowClassEx{
+		Size:       uint32(unsafe.Sizeof(windowClassEx{})),
+		WndProc:    syscall.NewCallback(windowProc),
+		Instance:   instance,
+		Cursor:     cursor,
+		Background: colorWindow + 1,
+		ClassName:  className,
+	}
+	if result, _, _ := procRegisterClassExW.Call(uintptr(unsafe.Pointer(&class))); result == 0 {
+		messageBox("无法注册程序窗口。", 0x10)
+		return
+	}
+
+	mainWindow, _, _ = procCreateWindowExW.Call(
+		0,
+		uintptr(unsafe.Pointer(className)),
+		uintptr(unsafe.Pointer(utf16(appTitle))),
+		wsOverlappedWindow|wsVisible,
+		0x80000000, 0x80000000, 720, 570,
+		0, 0, instance, 0,
+	)
+	if mainWindow == 0 {
+		messageBox("无法创建程序窗口。", 0x10)
+		return
+	}
+	procShowWindow.Call(mainWindow, swShow)
+	procUpdateWindow.Call(mainWindow)
+
+	var msg message
+	for {
+		result, _, _ := procGetMessageW.Call(uintptr(unsafe.Pointer(&msg)), 0, 0, 0)
+		if int32(result) <= 0 {
+			break
+		}
+		procTranslateMessage.Call(uintptr(unsafe.Pointer(&msg)))
+		procDispatchMessageW.Call(uintptr(unsafe.Pointer(&msg)))
+	}
+}
+
+func windowProc(hwnd uintptr, msg uint32, wParam, lParam uintptr) uintptr {
+	switch msg {
+	case wmCreate:
+		createControls(hwnd)
+		return 0
+	case wmCommand:
+		switch int(wParam & 0xffff) {
+		case controlFetch:
+			startFetch()
+		case controlLaunch:
+			startSaveAndLaunch()
+		case controlUpdate:
+			startBridgeUpdate()
+		}
+		return 0
+	case wmAppResult:
+		applyPendingUpdate()
+		return 0
+	case wmClose:
+		if hasActiveProxy() {
+			result := messageBoxResult("Codex 正在通过 Bridge 连接中转 API。\n关闭 Bridge 后当前 Codex 对话会中断，确定退出吗？", 0x34)
+			if result != 6 {
+				return 0
+			}
+		}
+		procDestroyWindow.Call(hwnd)
+		return 0
+	case wmDestroy:
+		stopActiveProxy()
+		procPostQuitMessage.Call(0)
+		return 0
+	}
+	result, _, _ := procDefWindowProcW.Call(hwnd, uintptr(msg), wParam, lParam)
+	return result
+}
+
+func createControls(hwnd uintptr) {
+	font, _, _ := procGetStockObject.Call(defaultGUIFont)
+	createLabel(hwnd, "API 接口", 28, 25, 100, 24, font)
+	baseEdit = createControl(hwnd, "EDIT", defaultBaseURL, wsChild|wsVisible|wsTabStop|wsBorder|esAutoHScroll, 28, 52, 650, 30, 0)
+	createLabel(hwnd, "API Key（仅在本机保存）", 28, 96, 220, 24, font)
+	keyEdit = createControl(hwnd, "EDIT", "", wsChild|wsVisible|wsTabStop|wsBorder|esAutoHScroll|esPassword, 28, 123, 650, 30, 0)
+	fetchButton = createControl(hwnd, "BUTTON", "获取模型", wsChild|wsVisible|wsTabStop, 28, 170, 125, 36, controlFetch)
+	launchButton = createControl(hwnd, "BUTTON", "保存并启动 Codex", wsChild|wsVisible|wsTabStop, 166, 170, 180, 36, controlLaunch)
+	updateButton = createControl(hwnd, "BUTTON", "更新 Bridge", wsChild|wsVisible|wsTabStop, 359, 170, 130, 36, controlUpdate)
+	createLabel(hwnd, "API 返回的模型", 28, 224, 180, 24, font)
+	modelList = createControl(hwnd, "LISTBOX", "", wsChild|wsVisible|wsBorder|wsVScroll|lbsNotify, 28, 252, 650, 210, 0)
+	statusLabel = createLabel(hwnd, "填写接口和 Key 后点击“获取模型”。", 28, 480, 650, 42, font)
+
+	for _, handle := range []uintptr{baseEdit, keyEdit, fetchButton, launchButton, updateButton, modelList} {
+		procSendMessageW.Call(handle, wmSetFont, font, 1)
+	}
+	if currentConfig.BaseURL != "" {
+		setText(baseEdit, currentConfig.BaseURL)
+	}
+	if key, err := decryptText(currentConfig.EncryptedKey); err == nil {
+		setText(keyEdit, key)
+	}
+	if len(currentConfig.Models) > 0 {
+		currentModels = append([]string(nil), currentConfig.Models...)
+		fillModels(currentModels)
+		setText(statusLabel, fmt.Sprintf("已载入上次保存的 %d 个模型。", len(currentModels)))
+	}
+}
+
+func createLabel(parent uintptr, text string, x, y, width, height int, font uintptr) uintptr {
+	handle := createControl(parent, "STATIC", text, wsChild|wsVisible, x, y, width, height, 0)
+	procSendMessageW.Call(handle, wmSetFont, font, 1)
+	return handle
+}
+
+func createControl(parent uintptr, class, text string, style uintptr, x, y, width, height, id int) uintptr {
+	handle, _, _ := procCreateWindowExW.Call(
+		0,
+		uintptr(unsafe.Pointer(utf16(class))),
+		uintptr(unsafe.Pointer(utf16(text))),
+		style,
+		uintptr(x), uintptr(y), uintptr(width), uintptr(height),
+		parent, uintptr(id), 0, 0,
+	)
+	return handle
+}
+
+func startFetch() {
+	baseURL := getText(baseEdit)
+	apiKey := getText(keyEdit)
+	setBusy(true, "正在连接模型接口…")
+	go func() {
+		models, err := fetchModels(baseURL, apiKey)
+		if err != nil {
+			postUpdate(uiUpdate{Error: err, Done: true})
+			return
+		}
+		postUpdate(uiUpdate{
+			Status: fmt.Sprintf("成功获取 %d 个模型。", len(models)),
+			Models: models,
+			Done:   true,
+		})
+	}()
+}
+
+func startSaveAndLaunch() {
+	baseURL := getText(baseEdit)
+	apiKey := getText(keyEdit)
+	setBusy(true, "正在保存配置…")
+	go func() {
+		models := append([]string(nil), currentModels...)
+		var err error
+		if len(models) == 0 {
+			postUpdate(uiUpdate{Status: "正在自动获取模型…"})
+			models, err = fetchModels(baseURL, apiKey)
+			if err != nil {
+				postUpdate(uiUpdate{Error: err, Done: true})
+				return
+			}
+		}
+		baseURL, err = normalizeBaseURL(baseURL)
+		if err != nil {
+			postUpdate(uiUpdate{Error: err, Done: true})
+			return
+		}
+		defaultModel := chooseDefaultModel(models, currentConfig.DefaultModel)
+		if err := saveApplicationConfig(baseURL, apiKey, models, defaultModel); err != nil {
+			postUpdate(uiUpdate{Error: fmt.Errorf("保存程序配置失败：%w", err), Done: true})
+			return
+		}
+		postUpdate(uiUpdate{Status: "正在启动本机 API 代理…", Models: models})
+		proxy, err := replaceAPIProxy(baseURL, apiKey)
+		if err != nil {
+			postUpdate(uiUpdate{Error: err, Done: true})
+			return
+		}
+		postUpdate(uiUpdate{Status: "正在写入官方 Codex 供应商配置…"})
+		if err := writeCodexProviderConfig(codexProxyBase, defaultModel); err != nil {
+			stopAPIProxy(proxy)
+			postUpdate(uiUpdate{Error: err, Done: true})
+			return
+		}
+		postUpdate(uiUpdate{Status: "正在启动官方 Codex…"})
+		install, err := findCodexInstallation()
+		if err != nil {
+			stopAPIProxy(proxy)
+			postUpdate(uiUpdate{Error: err, Done: true})
+			return
+		}
+		if err := launchCodex(install); err != nil {
+			stopAPIProxy(proxy)
+			postUpdate(uiUpdate{Error: err, Done: true})
+			return
+		}
+		menuResult := make(chan error, 1)
+		go func() {
+			menuResult <- localizeNativeMenu(inspectorPort)
+		}()
+		err = injectIntoCodex(cdpPort, models, defaultModel, func(status string) {
+			postUpdate(uiUpdate{Status: status})
+		})
+		if err != nil {
+			stopAPIProxy(proxy)
+			postUpdate(uiUpdate{Error: err, Done: true})
+			return
+		}
+		go syncProxyImagesToCodex(cdpPort, proxy)
+		menuErr := <-menuResult
+		if menuErr != nil {
+			diagnosticLog("menu.localization_failed", menuErr.Error())
+			postUpdate(uiUpdate{
+				Status: fmt.Sprintf("模型与图片桥接成功，但原生菜单汉化失败；详情见 %s", diagnosticLogPath()),
+				Models: models,
+				Done:   true,
+			})
+			return
+		}
+		diagnosticLog("launch.ready", fmt.Sprintf("models=%d", len(models)))
+		postUpdate(uiUpdate{
+			Status: fmt.Sprintf("启动成功：中文界面、图片桥接和 %d 个模型已就绪。请保持 Bridge 运行。", len(models)),
+			Models: models,
+			Done:   true,
+		})
+	}()
+}
+
+func postUpdate(update uiUpdate) {
+	updateMutex.Lock()
+	if update.Status != "" {
+		pendingUpdate.Status = update.Status
+	}
+	if update.Models != nil {
+		pendingUpdate.Models = update.Models
+	}
+	if update.Error != nil {
+		pendingUpdate.Error = update.Error
+	}
+	if update.Done {
+		pendingUpdate.Done = true
+	}
+	updateMutex.Unlock()
+	procPostMessageW.Call(mainWindow, wmAppResult, 0, 0)
+}
+
+func applyPendingUpdate() {
+	updateMutex.Lock()
+	update := pendingUpdate
+	pendingUpdate = uiUpdate{}
+	updateMutex.Unlock()
+	if update.Status != "" {
+		setText(statusLabel, update.Status)
+	}
+	if update.Models != nil {
+		currentModels = append([]string(nil), update.Models...)
+		fillModels(currentModels)
+	}
+	if update.Error != nil {
+		diagnosticLog("operation.failed", update.Error.Error())
+		message := update.Error.Error() + "\n\n诊断日志：" + diagnosticLogPath()
+		setText(statusLabel, message)
+		messageBox(message, 0x10)
+	}
+	if update.Done {
+		setBusy(false, "")
+	}
+}
+
+func setBusy(busy bool, status string) {
+	enabled := uintptr(1)
+	if busy {
+		enabled = 0
+	}
+	procEnableWindow.Call(fetchButton, enabled)
+	procEnableWindow.Call(launchButton, enabled)
+	procEnableWindow.Call(updateButton, enabled)
+	if status != "" {
+		setText(statusLabel, status)
+	}
+}
+
+func fillModels(models []string) {
+	procSendMessageW.Call(modelList, lbReset, 0, 0)
+	for _, model := range models {
+		procSendMessageW.Call(modelList, lbAddString, 0, uintptr(unsafe.Pointer(utf16(model))))
+	}
+	if len(models) > 0 {
+		procSendMessageW.Call(modelList, lbSetCurSel, 0, 0)
+	}
+}
+
+func setText(handle uintptr, value string) {
+	procSetWindowTextW.Call(handle, uintptr(unsafe.Pointer(utf16(value))))
+}
+
+func getText(handle uintptr) string {
+	length, _, _ := procGetWindowTextLen.Call(handle)
+	buffer := make([]uint16, int(length)+1)
+	procGetWindowTextW.Call(handle, uintptr(unsafe.Pointer(&buffer[0])), length+1)
+	return syscall.UTF16ToString(buffer)
+}
+
+func messageBox(text string, flags uintptr) {
+	procMessageBoxW.Call(mainWindow, uintptr(unsafe.Pointer(utf16(text))), uintptr(unsafe.Pointer(utf16(appTitle))), flags)
+}
+
+func messageBoxResult(text string, flags uintptr) uintptr {
+	result, _, _ := procMessageBoxW.Call(mainWindow, uintptr(unsafe.Pointer(utf16(text))), uintptr(unsafe.Pointer(utf16(appTitle))), flags)
+	return result
+}
+
+func utf16(value string) *uint16 {
+	pointer, _ := syscall.UTF16PtrFromString(value)
+	return pointer
+}
+
+func applicationDirectory() string {
+	root := os.Getenv("LOCALAPPDATA")
+	if root == "" {
+		root = os.TempDir()
+	}
+	return filepath.Join(root, "YunqiaoCodexBridge")
+}
+
+func loadSavedConfiguration() {
+	body, err := os.ReadFile(filepath.Join(applicationDirectory(), "config.json"))
+	if err == nil {
+		_ = json.Unmarshal(body, &currentConfig)
+	}
+	if currentConfig.BaseURL == "" {
+		currentConfig.BaseURL = defaultBaseURL
+	}
+}
+
+func saveApplicationConfig(baseURL, apiKey string, models []string, defaultModel string) error {
+	encrypted, err := encryptText(apiKey)
+	if err != nil {
+		return err
+	}
+	config := appConfig{
+		BaseURL:      baseURL,
+		EncryptedKey: encrypted,
+		Models:       append([]string(nil), models...),
+		DefaultModel: defaultModel,
+	}
+	body, err := json.MarshalIndent(config, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(applicationDirectory(), 0700); err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(applicationDirectory(), "config.json"), append(body, '\n'), 0600); err != nil {
+		return err
+	}
+	currentConfig = config
+	return nil
+}
+
+func encryptText(value string) (string, error) {
+	data := []byte(value)
+	if len(data) == 0 {
+		return "", nil
+	}
+	input := dataBlob{Size: uint32(len(data)), Data: &data[0]}
+	var output dataBlob
+	result, _, callErr := procCryptProtectData.Call(
+		uintptr(unsafe.Pointer(&input)), 0, 0, 0, 0, 0,
+		uintptr(unsafe.Pointer(&output)),
+	)
+	if result == 0 {
+		return "", callErr
+	}
+	defer procLocalFree.Call(uintptr(unsafe.Pointer(output.Data)))
+	protected := unsafe.Slice(output.Data, int(output.Size))
+	return base64.StdEncoding.EncodeToString(protected), nil
+}
+
+func decryptText(encoded string) (string, error) {
+	if encoded == "" {
+		return "", nil
+	}
+	data, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		return "", err
+	}
+	input := dataBlob{Size: uint32(len(data)), Data: &data[0]}
+	var output dataBlob
+	result, _, callErr := procCryptUnprotect.Call(
+		uintptr(unsafe.Pointer(&input)), 0, 0, 0, 0, 0,
+		uintptr(unsafe.Pointer(&output)),
+	)
+	if result == 0 {
+		return "", callErr
+	}
+	defer procLocalFree.Call(uintptr(unsafe.Pointer(output.Data)))
+	plain := unsafe.Slice(output.Data, int(output.Size))
+	return string(plain), nil
+}
+
+func writeCodexProviderConfig(baseURL, model string) error {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	codexHome := filepath.Join(home, ".codex")
+	configPath := filepath.Join(codexHome, "config.toml")
+	if err := os.MkdirAll(codexHome, 0700); err != nil {
+		return err
+	}
+	existing, _ := os.ReadFile(configPath)
+	if len(existing) > 0 {
+		backupDir := filepath.Join(applicationDirectory(), "backups")
+		if err := os.MkdirAll(backupDir, 0700); err != nil {
+			return err
+		}
+		backup := filepath.Join(backupDir, "config-"+time.Now().Format("20060102-150405")+".toml")
+		if err := os.WriteFile(backup, existing, 0600); err != nil {
+			return fmt.Errorf("备份 config.toml 失败：%w", err)
+		}
+	}
+	updated := updateCodexConfig(string(existing), baseURL, model)
+	if err := os.WriteFile(configPath, []byte(updated), 0600); err != nil {
+		return fmt.Errorf("写入 %s 失败：%w", configPath, err)
+	}
+	return nil
+}
+
+type codexInstallation struct {
+	Executable string
+	AUMID      string
+}
+
+func findCodexInstallation() (codexInstallation, error) {
+	local := os.Getenv("LOCALAPPDATA")
+	for _, path := range []string{
+		filepath.Join(local, "OpenAI", "Codex", "bin", "Codex.exe"),
+		filepath.Join(local, "OpenAI", "Codex", "bin", "ChatGPT.exe"),
+		filepath.Join(local, "Programs", "OpenAI", "Codex", "Codex.exe"),
+		filepath.Join(local, "Programs", "OpenAI", "Codex", "ChatGPT.exe"),
+	} {
+		if info, err := os.Stat(path); err == nil && !info.IsDir() {
+			return codexInstallation{Executable: path}, nil
+		}
+	}
+
+	script := `$p = Get-AppxPackage | Where-Object { $_.Name -in @('OpenAI.Codex','OpenAI.CodexBeta') } | Sort-Object Version -Descending | Select-Object -First 1; if ($p) { $m = Get-AppxPackageManifest $p; $e = [string]$m.Package.Applications.Application.Executable; Write-Output ($p.InstallLocation + '|' + $p.PackageFamilyName + '|' + $e) }`
+	command := exec.Command("powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script)
+	command.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	output, err := command.Output()
+	if err == nil {
+		parts := strings.Split(strings.TrimSpace(string(output)), "|")
+		if len(parts) == 3 && parts[1] != "" {
+			executable := ""
+			names := []string{parts[2], "Codex.exe", "ChatGPT.exe", "codex.exe"}
+			for _, name := range names {
+				if strings.TrimSpace(name) == "" {
+					continue
+				}
+				candidate := filepath.Join(parts[0], name)
+				if _, statErr := os.Stat(candidate); statErr == nil {
+					executable = candidate
+					break
+				}
+			}
+			if executable == "" && strings.TrimSpace(parts[2]) != "" {
+				executable = filepath.Join(parts[0], parts[2])
+			}
+			return codexInstallation{Executable: executable, AUMID: parts[1] + "!App"}, nil
+		}
+	}
+	return codexInstallation{}, errors.New("未找到官方 Codex Windows 客户端，请先安装并至少直接启动一次")
+}
+
+func launchCodex(install codexInstallation) error {
+	workingDirectory, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("无法确定 Windows 用户目录：%w", err)
+	}
+	if strings.TrimSpace(workingDirectory) == "" {
+		return errors.New("Windows 用户目录为空")
+	}
+	info, err := os.Stat(workingDirectory)
+	if err != nil || !info.IsDir() {
+		return fmt.Errorf("Windows 用户目录不可用：%s", workingDirectory)
+	}
+
+	processName := filepath.Base(install.Executable)
+	if processName == "" {
+		processName = "Codex.exe"
+	}
+	kill := exec.Command("taskkill.exe", "/F", "/T", "/IM", processName)
+	kill.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	_ = kill.Run()
+	time.Sleep(800 * time.Millisecond)
+
+	previousDirectory, getDirectoryErr := os.Getwd()
+	if err := os.Chdir(workingDirectory); err != nil {
+		return fmt.Errorf("切换 Codex 默认工作目录失败：%w", err)
+	}
+	if getDirectoryErr == nil && previousDirectory != "" {
+		defer func() { _ = os.Chdir(previousDirectory) }()
+	}
+	diagnosticLog("launch.working_directory", workingDirectory)
+
+	arguments := fmt.Sprintf("--remote-debugging-port=%d --remote-allow-origins=http://127.0.0.1:%d --inspect=127.0.0.1:%d --lang=zh-CN", cdpPort, cdpPort, inspectorPort)
+	if install.AUMID != "" {
+		if _, err := activateApplication(install.AUMID, arguments); err == nil {
+			return nil
+		}
+	}
+	if install.Executable == "" {
+		return errors.New("已找到 Codex 应用包，但无法激活其调试模式")
+	}
+	command := exec.Command(install.Executable,
+		fmt.Sprintf("--remote-debugging-port=%d", cdpPort),
+		fmt.Sprintf("--remote-allow-origins=http://127.0.0.1:%d", cdpPort),
+		fmt.Sprintf("--inspect=127.0.0.1:%d", inspectorPort),
+		"--lang=zh-CN",
+	)
+	command.Dir = workingDirectory
+	command.Env = append(os.Environ(), "LANG=zh_CN.UTF-8")
+	if err := command.Start(); err != nil {
+		return fmt.Errorf("启动官方 Codex 失败：%w", err)
+	}
+	return nil
+}
+
+func replaceAPIProxy(baseURL, apiKey string) (*apiProxy, error) {
+	proxyMutex.Lock()
+	defer proxyMutex.Unlock()
+	if activeProxy != nil {
+		activeProxy.close()
+		activeProxy = nil
+		time.Sleep(150 * time.Millisecond)
+	}
+	proxy, err := startAPIProxy(baseURL, apiKey, diagnosticLog)
+	if err != nil {
+		return nil, err
+	}
+	activeProxy = proxy
+	return proxy, nil
+}
+
+func hasActiveProxy() bool {
+	proxyMutex.Lock()
+	defer proxyMutex.Unlock()
+	return activeProxy != nil
+}
+
+func stopActiveProxy() {
+	proxyMutex.Lock()
+	defer proxyMutex.Unlock()
+	if activeProxy != nil {
+		activeProxy.close()
+		activeProxy = nil
+	}
+}
+
+func stopAPIProxy(proxy *apiProxy) {
+	proxyMutex.Lock()
+	defer proxyMutex.Unlock()
+	if proxy != nil {
+		proxy.close()
+	}
+	if activeProxy == proxy {
+		activeProxy = nil
+	}
+}
+
+func diagnosticLogPath() string {
+	return filepath.Join(applicationDirectory(), "bridge.log")
+}
+
+func diagnosticLog(event, detail string) {
+	_ = os.MkdirAll(applicationDirectory(), 0700)
+	file, err := os.OpenFile(diagnosticLogPath(), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
+	if err != nil {
+		return
+	}
+	defer file.Close()
+	detail = strings.ReplaceAll(detail, "\r", " ")
+	detail = strings.ReplaceAll(detail, "\n", " ")
+	_, _ = fmt.Fprintf(file, "%s [%s] %s\n", time.Now().Format(time.RFC3339), event, detail)
+}
+
+func activateApplication(aumid, arguments string) (uint32, error) {
+	const (
+		coinitApartmentThreaded = 0x2
+		clsctxLocalServer       = 0x4
+	)
+	hr, _, _ := procCoInitializeEx.Call(0, coinitApartmentThreaded)
+	initialized := int32(hr) >= 0
+	if initialized {
+		defer procCoUninitialize.Call()
+	}
+
+	clsid := guid{0x45BA127D, 0x10A8, 0x46EA, [8]byte{0x8A, 0xB7, 0x56, 0xEA, 0x90, 0x78, 0x94, 0x3C}}
+	iid := guid{0x2E941141, 0x7F97, 0x4756, [8]byte{0xBA, 0x1D, 0x9D, 0xEC, 0xDE, 0x89, 0x4A, 0x3D}}
+	var manager *activationManager
+	hr, _, _ = procCoCreateInstance.Call(
+		uintptr(unsafe.Pointer(&clsid)), 0, clsctxLocalServer,
+		uintptr(unsafe.Pointer(&iid)), uintptr(unsafe.Pointer(&manager)),
+	)
+	if int32(hr) < 0 || manager == nil {
+		return 0, fmt.Errorf("创建应用激活器失败：0x%08X", uint32(hr))
+	}
+	defer syscall.SyscallN(manager.VTable.Release, uintptr(unsafe.Pointer(manager)))
+
+	var pid uint32
+	hr, _, _ = syscall.SyscallN(
+		manager.VTable.ActivateApplication,
+		uintptr(unsafe.Pointer(manager)),
+		uintptr(unsafe.Pointer(utf16(aumid))),
+		uintptr(unsafe.Pointer(utf16(arguments))),
+		0,
+		uintptr(unsafe.Pointer(&pid)),
+	)
+	if int32(hr) < 0 {
+		return 0, fmt.Errorf("激活官方 Codex 失败：0x%08X", uint32(hr))
+	}
+	return pid, nil
+}
