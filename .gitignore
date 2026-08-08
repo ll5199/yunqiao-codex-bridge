@@ -1,3 +1,7 @@
 YunqiaoCodexBridge.exe
+YunqiaoCodexBridge-v*.exe
 *.zip
 *.backup.exe
+.tools/
+*.sha256
+latest.json
