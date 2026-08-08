@@ -19,23 +19,31 @@ import (
 )
 
 const (
-	appTitle      = "云桥 Codex Bridge"
+	appTitle      = "云桥（熙楠）"
 	cdpPort       = 9229
 	inspectorPort = 9329
 
-	wmCreate       = 0x0001
-	wmDestroy      = 0x0002
-	wmCommand      = 0x0111
-	wmClose        = 0x0010
-	wmSetFont      = 0x0030
-	wmAppResult    = 0x8001
-	lbAddString    = 0x0180
-	lbReset        = 0x0184
-	lbSetCurSel    = 0x0186
-	swShow         = 5
-	colorWindow    = 5
-	idcArrow       = 32512
-	defaultGUIFont = 17
+	wmCreate        = 0x0001
+	wmDestroy       = 0x0002
+	wmSize          = 0x0005
+	wmGetMinMaxInfo = 0x0024
+	wmCommand       = 0x0111
+	wmClose         = 0x0010
+	wmSetFont       = 0x0030
+	wmAppResult     = 0x8001
+	wmCtlColorEdit  = 0x0133
+	wmCtlColorList  = 0x0134
+	wmCtlColorBtn   = 0x0135
+	wmCtlColorText  = 0x0138
+	lbAddString     = 0x0180
+	lbReset         = 0x0184
+	lbSetCurSel     = 0x0186
+	pbmSetPos       = 0x0402
+	pbmSetRange32   = 0x0406
+	swShow          = 5
+	colorWindow     = 5
+	idcArrow        = 32512
+	defaultGUIFont  = 17
 
 	wsOverlappedWindow = 0x00CF0000
 	wsVisible          = 0x10000000
@@ -45,6 +53,7 @@ const (
 	wsBorder           = 0x00800000
 	esAutoHScroll      = 0x0080
 	esPassword         = 0x0020
+	esReadOnly         = 0x0800
 	lbsNotify          = 0x0001
 
 	controlFetch  = 101
@@ -58,33 +67,40 @@ var (
 	gdi32    = syscall.NewLazyDLL("gdi32.dll")
 	crypt32  = syscall.NewLazyDLL("crypt32.dll")
 	ole32    = syscall.NewLazyDLL("ole32.dll")
+	comctl32 = syscall.NewLazyDLL("comctl32.dll")
 
-	procRegisterClassExW = user32.NewProc("RegisterClassExW")
-	procCreateWindowExW  = user32.NewProc("CreateWindowExW")
-	procDefWindowProcW   = user32.NewProc("DefWindowProcW")
-	procShowWindow       = user32.NewProc("ShowWindow")
-	procUpdateWindow     = user32.NewProc("UpdateWindow")
-	procGetMessageW      = user32.NewProc("GetMessageW")
-	procTranslateMessage = user32.NewProc("TranslateMessage")
-	procDispatchMessageW = user32.NewProc("DispatchMessageW")
-	procPostQuitMessage  = user32.NewProc("PostQuitMessage")
-	procDestroyWindow    = user32.NewProc("DestroyWindow")
-	procSendMessageW     = user32.NewProc("SendMessageW")
-	procSetWindowTextW   = user32.NewProc("SetWindowTextW")
-	procGetWindowTextW   = user32.NewProc("GetWindowTextW")
-	procGetWindowTextLen = user32.NewProc("GetWindowTextLengthW")
-	procMessageBoxW      = user32.NewProc("MessageBoxW")
-	procEnableWindow     = user32.NewProc("EnableWindow")
-	procPostMessageW     = user32.NewProc("PostMessageW")
-	procLoadCursorW      = user32.NewProc("LoadCursorW")
-	procGetModuleHandleW = kernel32.NewProc("GetModuleHandleW")
-	procGetStockObject   = gdi32.NewProc("GetStockObject")
-	procCryptProtectData = crypt32.NewProc("CryptProtectData")
-	procCryptUnprotect   = crypt32.NewProc("CryptUnprotectData")
-	procLocalFree        = kernel32.NewProc("LocalFree")
-	procCoInitializeEx   = ole32.NewProc("CoInitializeEx")
-	procCoUninitialize   = ole32.NewProc("CoUninitialize")
-	procCoCreateInstance = ole32.NewProc("CoCreateInstance")
+	procRegisterClassExW   = user32.NewProc("RegisterClassExW")
+	procCreateWindowExW    = user32.NewProc("CreateWindowExW")
+	procDefWindowProcW     = user32.NewProc("DefWindowProcW")
+	procShowWindow         = user32.NewProc("ShowWindow")
+	procUpdateWindow       = user32.NewProc("UpdateWindow")
+	procGetMessageW        = user32.NewProc("GetMessageW")
+	procTranslateMessage   = user32.NewProc("TranslateMessage")
+	procDispatchMessageW   = user32.NewProc("DispatchMessageW")
+	procPostQuitMessage    = user32.NewProc("PostQuitMessage")
+	procDestroyWindow      = user32.NewProc("DestroyWindow")
+	procSendMessageW       = user32.NewProc("SendMessageW")
+	procSetWindowTextW     = user32.NewProc("SetWindowTextW")
+	procMoveWindow         = user32.NewProc("MoveWindow")
+	procGetWindowTextW     = user32.NewProc("GetWindowTextW")
+	procGetWindowTextLen   = user32.NewProc("GetWindowTextLengthW")
+	procMessageBoxW        = user32.NewProc("MessageBoxW")
+	procEnableWindow       = user32.NewProc("EnableWindow")
+	procPostMessageW       = user32.NewProc("PostMessageW")
+	procLoadCursorW        = user32.NewProc("LoadCursorW")
+	procGetModuleHandleW   = kernel32.NewProc("GetModuleHandleW")
+	procGetStockObject     = gdi32.NewProc("GetStockObject")
+	procCreateSolidBrush   = gdi32.NewProc("CreateSolidBrush")
+	procSetTextColor       = gdi32.NewProc("SetTextColor")
+	procSetBkColor         = gdi32.NewProc("SetBkColor")
+	procSetBkMode          = gdi32.NewProc("SetBkMode")
+	procCryptProtectData   = crypt32.NewProc("CryptProtectData")
+	procCryptUnprotect     = crypt32.NewProc("CryptUnprotectData")
+	procLocalFree          = kernel32.NewProc("LocalFree")
+	procCoInitializeEx     = ole32.NewProc("CoInitializeEx")
+	procCoUninitialize     = ole32.NewProc("CoUninitialize")
+	procCoCreateInstance   = ole32.NewProc("CoCreateInstance")
+	procInitCommonControls = comctl32.NewProc("InitCommonControls")
 )
 
 type point struct {
@@ -122,6 +138,10 @@ type dataBlob struct {
 	Data *byte
 }
 
+type minMaxInfo struct {
+	Reserved, MaxSize, MaxPosition, MinTrackSize, MaxTrackSize point
+}
+
 type guid struct {
 	Data1 uint32
 	Data2 uint16
@@ -143,34 +163,67 @@ type activationManagerVTable struct {
 }
 
 type uiUpdate struct {
-	Status string
-	Models []string
-	Error  error
-	Done   bool
+	Status      string
+	Models      []string
+	Error       error
+	Done        bool
+	Progress    int
+	SetProgress bool
 }
 
 var (
-	mainWindow    uintptr
-	baseEdit      uintptr
-	keyEdit       uintptr
-	modelList     uintptr
-	statusLabel   uintptr
-	fetchButton   uintptr
-	launchButton  uintptr
-	updateButton  uintptr
-	currentModels []string
-	currentConfig appConfig
-	activeProxy   *apiProxy
-	proxyMutex    sync.Mutex
-	updateMutex   sync.Mutex
-	pendingUpdate uiUpdate
+	mainWindow      uintptr
+	baseEdit        uintptr
+	keyEdit         uintptr
+	modelList       uintptr
+	statusLabel     uintptr
+	fetchButton     uintptr
+	launchButton    uintptr
+	updateButton    uintptr
+	currentModels   []string
+	currentConfig   appConfig
+	activeProxy     *apiProxy
+	proxyMutex      sync.Mutex
+	updateMutex     sync.Mutex
+	pendingUpdate   uiUpdate
+	lastStatus      string
+	backgroundBrush uintptr
+	controlBrush    uintptr
+	statusBrush     uintptr
+	brandLabel      uintptr
+	subtitleLabel   uintptr
+	baseLabel       uintptr
+	keyLabel        uintptr
+	modelsLabel     uintptr
+	statusTitle     uintptr
+	footerLabel     uintptr
+	progressBar     uintptr
+	progressLabel   uintptr
+)
+
+const (
+	// Win32 COLORREF values use BGR byte order. This palette mirrors the
+	// restrained Codex light appearance: warm canvas, white surfaces,
+	// charcoal text and a muted green accent.
+	colorBackground uintptr = 0xF4F7F7 // #F7F7F4
+	colorControl    uintptr = 0xFFFFFF // #FFFFFF
+	colorStatus     uintptr = 0xEAF3EE // #EEF3EA
+	colorText       uintptr = 0x1B1F1F // #1F1F1B
+	colorAccent     uintptr = 0x4F6035 // #35604F
 )
 
 func main() {
+	if runUpdateHelperIfRequested() {
+		return
+	}
 	runtime.LockOSThread()
 	loadSavedConfiguration()
+	procInitCommonControls.Call()
 
 	instance, _, _ := procGetModuleHandleW.Call(0)
+	backgroundBrush, _, _ = procCreateSolidBrush.Call(colorBackground)
+	controlBrush, _, _ = procCreateSolidBrush.Call(colorControl)
+	statusBrush, _, _ = procCreateSolidBrush.Call(colorStatus)
 	className := utf16("YunqiaoCodexBridgeWindow")
 	cursor, _, _ := procLoadCursorW.Call(0, idcArrow)
 	class := windowClassEx{
@@ -178,7 +231,7 @@ func main() {
 		WndProc:    syscall.NewCallback(windowProc),
 		Instance:   instance,
 		Cursor:     cursor,
-		Background: colorWindow + 1,
+		Background: backgroundBrush,
 		ClassName:  className,
 	}
 	if result, _, _ := procRegisterClassExW.Call(uintptr(unsafe.Pointer(&class))); result == 0 {
@@ -191,7 +244,7 @@ func main() {
 		uintptr(unsafe.Pointer(className)),
 		uintptr(unsafe.Pointer(utf16(appTitle))),
 		wsOverlappedWindow|wsVisible,
-		0x80000000, 0x80000000, 720, 570,
+		0x80000000, 0x80000000, 760, 742,
 		0, 0, instance, 0,
 	)
 	if mainWindow == 0 {
@@ -217,6 +270,13 @@ func windowProc(hwnd uintptr, msg uint32, wParam, lParam uintptr) uintptr {
 	case wmCreate:
 		createControls(hwnd)
 		return 0
+	case wmSize:
+		layoutControls(int(uint16(lParam&0xffff)), int(uint16((lParam>>16)&0xffff)))
+		return 0
+	case wmGetMinMaxInfo:
+		info := (*minMaxInfo)(unsafe.Pointer(lParam))
+		info.MinTrackSize = point{X: 540, Y: 640}
+		return 0
 	case wmCommand:
 		switch int(wParam & 0xffff) {
 		case controlFetch:
@@ -230,6 +290,23 @@ func windowProc(hwnd uintptr, msg uint32, wParam, lParam uintptr) uintptr {
 	case wmAppResult:
 		applyPendingUpdate()
 		return 0
+	case wmCtlColorText:
+		if lParam == brandLabel || lParam == footerLabel {
+			procSetTextColor.Call(wParam, colorAccent)
+		} else {
+			procSetTextColor.Call(wParam, colorText)
+		}
+		procSetBkMode.Call(wParam, 1)
+		return backgroundBrush
+	case wmCtlColorEdit, wmCtlColorList, wmCtlColorBtn:
+		if lParam == statusLabel {
+			procSetTextColor.Call(wParam, colorAccent)
+			procSetBkColor.Call(wParam, colorStatus)
+			return statusBrush
+		}
+		procSetTextColor.Call(wParam, colorText)
+		procSetBkColor.Call(wParam, colorControl)
+		return controlBrush
 	case wmClose:
 		if hasActiveProxy() {
 			result := messageBoxResult("Codex 正在通过 Bridge 连接中转 API。\n关闭 Bridge 后当前 Codex 对话会中断，确定退出吗？", 0x34)
@@ -250,18 +327,26 @@ func windowProc(hwnd uintptr, msg uint32, wParam, lParam uintptr) uintptr {
 
 func createControls(hwnd uintptr) {
 	font, _, _ := procGetStockObject.Call(defaultGUIFont)
-	createLabel(hwnd, "API 接口", 28, 25, 100, 24, font)
-	baseEdit = createControl(hwnd, "EDIT", defaultBaseURL, wsChild|wsVisible|wsTabStop|wsBorder|esAutoHScroll, 28, 52, 650, 30, 0)
-	createLabel(hwnd, "API Key（仅在本机保存）", 28, 96, 220, 24, font)
-	keyEdit = createControl(hwnd, "EDIT", "", wsChild|wsVisible|wsTabStop|wsBorder|esAutoHScroll|esPassword, 28, 123, 650, 30, 0)
-	fetchButton = createControl(hwnd, "BUTTON", "获取模型", wsChild|wsVisible|wsTabStop, 28, 170, 125, 36, controlFetch)
-	launchButton = createControl(hwnd, "BUTTON", "保存并启动 Codex", wsChild|wsVisible|wsTabStop, 166, 170, 180, 36, controlLaunch)
-	updateButton = createControl(hwnd, "BUTTON", "更新 Bridge", wsChild|wsVisible|wsTabStop, 359, 170, 130, 36, controlUpdate)
-	createLabel(hwnd, "API 返回的模型", 28, 224, 180, 24, font)
-	modelList = createControl(hwnd, "LISTBOX", "", wsChild|wsVisible|wsBorder|wsVScroll|lbsNotify, 28, 252, 650, 210, 0)
-	statusLabel = createLabel(hwnd, "填写接口和 Key 后点击“获取模型”。", 28, 480, 650, 42, font)
+	brandLabel = createLabel(hwnd, "云桥（熙楠）", 28, 22, 240, 26, font)
+	subtitleLabel = createLabel(hwnd, "Codex Bridge  ·  安全连接中转 API", 28, 50, 360, 22, font)
+	baseLabel = createLabel(hwnd, "API 接口", 28, 88, 100, 24, font)
+	baseEdit = createControl(hwnd, "EDIT", defaultBaseURL, wsChild|wsVisible|wsTabStop|wsBorder|esAutoHScroll, 28, 114, 690, 32, 0)
+	keyLabel = createLabel(hwnd, "API Key（使用 Windows DPAPI 加密，仅保存在本机）", 28, 162, 420, 24, font)
+	keyEdit = createControl(hwnd, "EDIT", "", wsChild|wsVisible|wsTabStop|wsBorder|esAutoHScroll|esPassword, 28, 188, 690, 32, 0)
+	fetchButton = createControl(hwnd, "BUTTON", "获取模型", wsChild|wsVisible|wsTabStop, 28, 240, 132, 38, controlFetch)
+	launchButton = createControl(hwnd, "BUTTON", "保存并启动 Codex", wsChild|wsVisible|wsTabStop, 174, 240, 192, 38, controlLaunch)
+	updateButton = createControl(hwnd, "BUTTON", "检查云桥更新", wsChild|wsVisible|wsTabStop, 380, 240, 176, 38, controlUpdate)
+	modelsLabel = createLabel(hwnd, "API 返回的模型", 28, 302, 180, 24, font)
+	modelList = createControl(hwnd, "LISTBOX", "", wsChild|wsVisible|wsBorder|wsVScroll|lbsNotify, 28, 328, 690, 220, 0)
+	statusTitle = createLabel(hwnd, "运行状态", 28, 568, 100, 22, font)
+	statusLabel = createControl(hwnd, "EDIT", "填写接口和 Key 后点击“获取模型”。", wsChild|wsVisible|wsBorder|esAutoHScroll|esReadOnly, 28, 594, 690, 32, 0)
+	progressLabel = createLabel(hwnd, "更新进度  0%", 28, 638, 150, 20, font)
+	progressBar = createControl(hwnd, "msctls_progress32", "", wsChild|wsVisible|wsBorder, 28, 662, 690, 18, 0)
+	procSendMessageW.Call(progressBar, pbmSetRange32, 0, 100)
+	footerLabel = createLabel(hwnd, fmt.Sprintf("云桥服务器更新源  ·  Bridge v%s", appVersion), 28, 690, 360, 20, font)
+	layoutControls(744, 703)
 
-	for _, handle := range []uintptr{baseEdit, keyEdit, fetchButton, launchButton, updateButton, modelList} {
+	for _, handle := range []uintptr{baseEdit, keyEdit, fetchButton, launchButton, updateButton, modelList, statusLabel} {
 		procSendMessageW.Call(handle, wmSetFont, font, 1)
 	}
 	if currentConfig.BaseURL != "" {
@@ -273,7 +358,30 @@ func createControls(hwnd uintptr) {
 	if len(currentConfig.Models) > 0 {
 		currentModels = append([]string(nil), currentConfig.Models...)
 		fillModels(currentModels)
-		setText(statusLabel, fmt.Sprintf("已载入上次保存的 %d 个模型。", len(currentModels)))
+		setStatus(fmt.Sprintf("已载入上次保存的 %d 个模型。", len(currentModels)))
+	}
+}
+
+func layoutControls(width, height int) {
+	if brandLabel == 0 || width <= 0 || height <= 0 {
+		return
+	}
+	layout := calculateWindowLayout(width, height)
+	items := []struct {
+		handle uintptr
+		rect   controlRect
+	}{
+		{brandLabel, layout.Brand}, {subtitleLabel, layout.Subtitle},
+		{baseLabel, layout.BaseLabel}, {baseEdit, layout.BaseEdit},
+		{keyLabel, layout.KeyLabel}, {keyEdit, layout.KeyEdit},
+		{fetchButton, layout.FetchButton}, {launchButton, layout.LaunchButton},
+		{updateButton, layout.UpdateButton}, {modelsLabel, layout.ModelsLabel},
+		{modelList, layout.ModelsList}, {statusTitle, layout.StatusTitle},
+		{statusLabel, layout.StatusEdit}, {progressLabel, layout.ProgressLabel},
+		{progressBar, layout.ProgressBar}, {footerLabel, layout.Footer},
+	}
+	for _, item := range items {
+		procMoveWindow.Call(item.handle, uintptr(item.rect.X), uintptr(item.rect.Y), uintptr(item.rect.Width), uintptr(item.rect.Height), 1)
 	}
 }
 
@@ -405,11 +513,25 @@ func postUpdate(update uiUpdate) {
 	if update.Error != nil {
 		pendingUpdate.Error = update.Error
 	}
+	if update.SetProgress {
+		setUpdateProgress(update.Progress)
+	}
 	if update.Done {
 		pendingUpdate.Done = true
 	}
 	updateMutex.Unlock()
 	procPostMessageW.Call(mainWindow, wmAppResult, 0, 0)
+}
+
+func setUpdateProgress(value int) {
+	if value < 0 {
+		value = 0
+	}
+	if value > 100 {
+		value = 100
+	}
+	procSendMessageW.Call(progressBar, pbmSetPos, uintptr(value), 0)
+	setText(progressLabel, fmt.Sprintf("更新进度  %d%%", value))
 }
 
 func applyPendingUpdate() {
@@ -418,7 +540,7 @@ func applyPendingUpdate() {
 	pendingUpdate = uiUpdate{}
 	updateMutex.Unlock()
 	if update.Status != "" {
-		setText(statusLabel, update.Status)
+		setStatus(update.Status)
 	}
 	if update.Models != nil {
 		currentModels = append([]string(nil), update.Models...)
@@ -427,7 +549,7 @@ func applyPendingUpdate() {
 	if update.Error != nil {
 		diagnosticLog("operation.failed", update.Error.Error())
 		message := update.Error.Error() + "\n\n诊断日志：" + diagnosticLogPath()
-		setText(statusLabel, message)
+		setStatus("操作失败：" + statusSummary(update.Error.Error(), 96))
 		messageBox(message, 0x10)
 	}
 	if update.Done {
@@ -444,8 +566,17 @@ func setBusy(busy bool, status string) {
 	procEnableWindow.Call(launchButton, enabled)
 	procEnableWindow.Call(updateButton, enabled)
 	if status != "" {
-		setText(statusLabel, status)
+		setStatus(status)
 	}
+}
+
+func setStatus(value string) {
+	value = statusSummary(value, 120)
+	if value == "" || value == lastStatus {
+		return
+	}
+	lastStatus = value
+	setText(statusLabel, value)
 }
 
 func fillModels(models []string) {

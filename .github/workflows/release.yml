@@ -1,4 +1,4 @@
-name: Release Windows Bridge
+name: Release Bridge Source
 
 on:
   push:
@@ -23,10 +23,8 @@ jobs:
           GOOS: windows
           GOARCH: amd64
           CGO_ENABLED: "0"
-        run: go build -buildvcs=false -trimpath -ldflags="-s -w -H=windowsgui" -o YunqiaoCodexBridge.exe .
-      - name: Create checksum
-        run: sha256sum YunqiaoCodexBridge.exe > YunqiaoCodexBridge.exe.sha256
-      - name: Publish release
+        run: go build -buildvcs=false -trimpath -ldflags="-s -w -H=windowsgui" -o /tmp/YunqiaoCodexBridge.exe .
+      - name: Publish source release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "${GITHUB_REF_NAME}" YunqiaoCodexBridge.exe YunqiaoCodexBridge.exe.sha256 --generate-notes --title "Yunqiao Codex Bridge ${GITHUB_REF_NAME}"
+        run: gh release create "${GITHUB_REF_NAME}" --generate-notes --title "Yunqiao Codex Bridge ${GITHUB_REF_NAME}"
