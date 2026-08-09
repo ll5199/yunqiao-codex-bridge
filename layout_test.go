@@ -50,3 +50,14 @@ func TestWindowLayoutKeepsAdvertisementUsable(t *testing.T) {
 		}
 	}
 }
+
+func TestWindowLayoutReclaimsSpaceWhenAdvertisementDisabled(t *testing.T) {
+	enabled := calculateWindowLayoutWithAdvertisement(760, 720, true)
+	disabled := calculateWindowLayoutWithAdvertisement(760, 720, false)
+	if disabled.BaseLabel.Y >= enabled.BaseLabel.Y {
+		t.Fatal("API controls did not move up when advertisement was disabled")
+	}
+	if disabled.ModelsList.Height <= enabled.ModelsList.Height {
+		t.Fatal("model list did not reclaim disabled advertisement space")
+	}
+}

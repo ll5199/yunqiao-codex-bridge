@@ -13,6 +13,10 @@ type windowLayout struct {
 }
 
 func calculateWindowLayout(width, height int) windowLayout {
+	return calculateWindowLayoutWithAdvertisement(width, height, true)
+}
+
+func calculateWindowLayoutWithAdvertisement(width, height int, advertisementEnabled bool) windowLayout {
 	if width < 520 {
 		width = 520
 	}
@@ -48,6 +52,11 @@ func calculateWindowLayout(width, height int) windowLayout {
 		buttonHeight = 34
 		modelsLabelY = 326
 	}
+	if !advertisementEnabled {
+		const advertisementSpace = 68
+		buttonsY -= advertisementSpace
+		modelsLabelY -= advertisementSpace
+	}
 
 	statusTitleY := height - 146
 	statusEditY := height - 120
@@ -65,10 +74,10 @@ func calculateWindowLayout(width, height int) windowLayout {
 		Subtitle:            controlRect{margin, 48, contentWidth, 22},
 		Advertisement:       controlRect{margin, advertisementY, contentWidth - advertisementButtonWidth - advertisementGap, advertisementHeight},
 		AdvertisementButton: controlRect{width - margin - advertisementButtonWidth, advertisementY + 7, advertisementButtonWidth, advertisementHeight - 14},
-		BaseLabel:           controlRect{margin, 150, contentWidth, 24},
-		BaseEdit:            controlRect{margin, 176, contentWidth, 32},
-		KeyLabel:            controlRect{margin, 224, contentWidth, 24},
-		KeyEdit:             controlRect{margin, 250, contentWidth, 32},
+		BaseLabel:           controlRect{margin, positionWithAdvertisement(150, advertisementEnabled), contentWidth, 24},
+		BaseEdit:            controlRect{margin, positionWithAdvertisement(176, advertisementEnabled), contentWidth, 32},
+		KeyLabel:            controlRect{margin, positionWithAdvertisement(224, advertisementEnabled), contentWidth, 24},
+		KeyEdit:             controlRect{margin, positionWithAdvertisement(250, advertisementEnabled), contentWidth, 32},
 		ModelsLabel:         controlRect{margin, modelsLabelY, contentWidth, 24},
 		ModelsList:          controlRect{margin, modelsTop, contentWidth, modelsHeight},
 		StatusTitle:         controlRect{margin, statusTitleY, contentWidth, 22},
@@ -90,4 +99,11 @@ func calculateWindowLayout(width, height int) windowLayout {
 		layout.UpdateButton = controlRect{margin, buttonsY + buttonHeight + 8, contentWidth, buttonHeight}
 	}
 	return layout
+}
+
+func positionWithAdvertisement(position int, enabled bool) int {
+	if enabled {
+		return position
+	}
+	return position - 68
 }
