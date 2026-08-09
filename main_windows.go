@@ -23,27 +23,29 @@ const (
 	cdpPort       = 9229
 	inspectorPort = 9329
 
-	wmCreate        = 0x0001
-	wmDestroy       = 0x0002
-	wmSize          = 0x0005
-	wmGetMinMaxInfo = 0x0024
-	wmCommand       = 0x0111
-	wmClose         = 0x0010
-	wmSetFont       = 0x0030
-	wmAppResult     = 0x8001
-	wmCtlColorEdit  = 0x0133
-	wmCtlColorList  = 0x0134
-	wmCtlColorBtn   = 0x0135
-	wmCtlColorText  = 0x0138
-	lbAddString     = 0x0180
-	lbReset         = 0x0184
-	lbSetCurSel     = 0x0186
-	pbmSetPos       = 0x0402
-	pbmSetRange32   = 0x0406
-	swShow          = 5
-	colorWindow     = 5
-	idcArrow        = 32512
-	defaultGUIFont  = 17
+	wmCreate           = 0x0001
+	wmDestroy          = 0x0002
+	wmSize             = 0x0005
+	wmGetMinMaxInfo    = 0x0024
+	wmCommand          = 0x0111
+	wmClose            = 0x0010
+	wmSetFont          = 0x0030
+	wmAppResult        = 0x8001
+	wmAppAdvertisement = 0x8002
+	wmCtlColorEdit     = 0x0133
+	wmCtlColorList     = 0x0134
+	wmCtlColorBtn      = 0x0135
+	wmCtlColorText     = 0x0138
+	lbAddString        = 0x0180
+	lbReset            = 0x0184
+	lbSetCurSel        = 0x0186
+	pbmSetPos          = 0x0402
+	pbmSetRange32      = 0x0406
+	swHide             = 0
+	swShow             = 5
+	colorWindow        = 5
+	idcArrow           = 32512
+	defaultGUIFont     = 17
 
 	wsOverlappedWindow = 0x00CF0000
 	wsVisible          = 0x10000000
@@ -55,10 +57,13 @@ const (
 	esPassword         = 0x0020
 	esReadOnly         = 0x0800
 	lbsNotify          = 0x0001
+	ssNotify           = 0x0100
+	ssCenterImage      = 0x0200
 
-	controlFetch  = 101
-	controlLaunch = 102
-	controlUpdate = 103
+	controlFetch         = 101
+	controlLaunch        = 102
+	controlUpdate        = 103
+	controlAdvertisement = 104
 )
 
 var (
@@ -68,6 +73,7 @@ var (
 	crypt32  = syscall.NewLazyDLL("crypt32.dll")
 	ole32    = syscall.NewLazyDLL("ole32.dll")
 	comctl32 = syscall.NewLazyDLL("comctl32.dll")
+	shell32  = syscall.NewLazyDLL("shell32.dll")
 
 	procRegisterClassExW   = user32.NewProc("RegisterClassExW")
 	procCreateWindowExW    = user32.NewProc("CreateWindowExW")
@@ -101,6 +107,7 @@ var (
 	procCoUninitialize     = ole32.NewProc("CoUninitialize")
 	procCoCreateInstance   = ole32.NewProc("CoCreateInstance")
 	procInitCommonControls = comctl32.NewProc("InitCommonControls")
+	procShellExecuteW      = shell32.NewProc("ShellExecuteW")
 )
 
 type point struct {
@@ -172,33 +179,40 @@ type uiUpdate struct {
 }
 
 var (
-	mainWindow      uintptr
-	baseEdit        uintptr
-	keyEdit         uintptr
-	modelList       uintptr
-	statusLabel     uintptr
-	fetchButton     uintptr
-	launchButton    uintptr
-	updateButton    uintptr
-	currentModels   []string
-	currentConfig   appConfig
-	activeProxy     *apiProxy
-	proxyMutex      sync.Mutex
-	updateMutex     sync.Mutex
-	pendingUpdate   uiUpdate
-	lastStatus      string
-	backgroundBrush uintptr
-	controlBrush    uintptr
-	statusBrush     uintptr
-	brandLabel      uintptr
-	subtitleLabel   uintptr
-	baseLabel       uintptr
-	keyLabel        uintptr
-	modelsLabel     uintptr
-	statusTitle     uintptr
-	footerLabel     uintptr
-	progressBar     uintptr
-	progressLabel   uintptr
+	mainWindow           uintptr
+	baseEdit             uintptr
+	keyEdit              uintptr
+	modelList            uintptr
+	statusLabel          uintptr
+	fetchButton          uintptr
+	launchButton         uintptr
+	updateButton         uintptr
+	advertisementLabel   uintptr
+	advertisementButton  uintptr
+	currentAdvertisement advertisementConfig
+	pendingAdvertisement advertisementConfig
+	advertisementMutex   sync.Mutex
+	currentModels        []string
+	currentConfig        appConfig
+	activeProxy          *apiProxy
+	proxyMutex           sync.Mutex
+	updateMutex          sync.Mutex
+	pendingUpdate        uiUpdate
+	lastStatus           string
+	backgroundBrush      uintptr
+	controlBrush         uintptr
+	statusBrush          uintptr
+	brandLabel           uintptr
+	subtitleLabel        uintptr
+	baseLabel            uintptr
+	keyLabel             uintptr
+	modelsLabel          uintptr
+	statusTitle          uintptr
+	footerLabel          uintptr
+	progressBar          uintptr
+	progressLabel        uintptr
+	lastClientWidth      int
+	lastClientHeight     int
 )
 
 const (
@@ -244,7 +258,7 @@ func main() {
 		uintptr(unsafe.Pointer(className)),
 		uintptr(unsafe.Pointer(utf16(appTitle))),
 		wsOverlappedWindow|wsVisible,
-		0x80000000, 0x80000000, 760, 742,
+		0x80000000, 0x80000000, 760, 810,
 		0, 0, instance, 0,
 	)
 	if mainWindow == 0 {
@@ -275,7 +289,7 @@ func windowProc(hwnd uintptr, msg uint32, wParam, lParam uintptr) uintptr {
 		return 0
 	case wmGetMinMaxInfo:
 		info := (*minMaxInfo)(unsafe.Pointer(lParam))
-		info.MinTrackSize = point{X: 540, Y: 640}
+		info.MinTrackSize = point{X: 540, Y: 720}
 		return 0
 	case wmCommand:
 		switch int(wParam & 0xffff) {
@@ -285,12 +299,22 @@ func windowProc(hwnd uintptr, msg uint32, wParam, lParam uintptr) uintptr {
 			startSaveAndLaunch()
 		case controlUpdate:
 			startBridgeUpdate()
+		case controlAdvertisement:
+			openAdvertisementDetails()
 		}
 		return 0
 	case wmAppResult:
 		applyPendingUpdate()
 		return 0
+	case wmAppAdvertisement:
+		applyPendingAdvertisement()
+		return 0
 	case wmCtlColorText:
+		if lParam == advertisementLabel {
+			procSetTextColor.Call(wParam, colorAccent)
+			procSetBkColor.Call(wParam, colorStatus)
+			return statusBrush
+		}
 		if lParam == brandLabel || lParam == footerLabel {
 			procSetTextColor.Call(wParam, colorAccent)
 		} else {
@@ -329,24 +353,30 @@ func createControls(hwnd uintptr) {
 	font, _, _ := procGetStockObject.Call(defaultGUIFont)
 	brandLabel = createLabel(hwnd, "云桥（熙楠）", 28, 22, 240, 26, font)
 	subtitleLabel = createLabel(hwnd, "Codex Bridge  ·  安全连接中转 API", 28, 50, 360, 22, font)
-	baseLabel = createLabel(hwnd, "API 接口", 28, 88, 100, 24, font)
-	baseEdit = createControl(hwnd, "EDIT", defaultBaseURL, wsChild|wsVisible|wsTabStop|wsBorder|esAutoHScroll, 28, 114, 690, 32, 0)
-	keyLabel = createLabel(hwnd, "API Key（使用 Windows DPAPI 加密，仅保存在本机）", 28, 162, 420, 24, font)
-	keyEdit = createControl(hwnd, "EDIT", "", wsChild|wsVisible|wsTabStop|wsBorder|esAutoHScroll|esPassword, 28, 188, 690, 32, 0)
-	fetchButton = createControl(hwnd, "BUTTON", "获取模型", wsChild|wsVisible|wsTabStop, 28, 240, 132, 38, controlFetch)
-	launchButton = createControl(hwnd, "BUTTON", "保存并启动 Codex", wsChild|wsVisible|wsTabStop, 174, 240, 192, 38, controlLaunch)
-	updateButton = createControl(hwnd, "BUTTON", "检查云桥更新", wsChild|wsVisible|wsTabStop, 380, 240, 176, 38, controlUpdate)
-	modelsLabel = createLabel(hwnd, "API 返回的模型", 28, 302, 180, 24, font)
-	modelList = createControl(hwnd, "LISTBOX", "", wsChild|wsVisible|wsBorder|wsVScroll|lbsNotify, 28, 328, 690, 220, 0)
-	statusTitle = createLabel(hwnd, "运行状态", 28, 568, 100, 22, font)
-	statusLabel = createControl(hwnd, "EDIT", "填写接口和 Key 后点击“获取模型”。", wsChild|wsVisible|wsBorder|esAutoHScroll|esReadOnly, 28, 594, 690, 32, 0)
-	progressLabel = createLabel(hwnd, "更新进度  0%", 28, 638, 150, 20, font)
-	progressBar = createControl(hwnd, "msctls_progress32", "", wsChild|wsVisible|wsBorder, 28, 662, 690, 18, 0)
+	currentAdvertisement = defaultAdvertisementConfig()
+	if cached, err := loadAdvertisementCache(advertisementCachePath()); err == nil {
+		currentAdvertisement = cached
+	}
+	advertisementLabel = createControl(hwnd, "STATIC", currentAdvertisement.labelText(), wsChild|wsVisible|wsBorder|ssNotify|ssCenterImage, 28, 82, 576, 50, controlAdvertisement)
+	advertisementButton = createControl(hwnd, "BUTTON", currentAdvertisement.ButtonText, wsChild|wsVisible|wsTabStop, 614, 89, 104, 36, controlAdvertisement)
+	baseLabel = createLabel(hwnd, "API 接口", 28, 152, 100, 24, font)
+	baseEdit = createControl(hwnd, "EDIT", defaultBaseURL, wsChild|wsVisible|wsTabStop|wsBorder|esAutoHScroll, 28, 178, 690, 32, 0)
+	keyLabel = createLabel(hwnd, "API Key（使用 Windows DPAPI 加密，仅保存在本机）", 28, 226, 420, 24, font)
+	keyEdit = createControl(hwnd, "EDIT", "", wsChild|wsVisible|wsTabStop|wsBorder|esAutoHScroll|esPassword, 28, 252, 690, 32, 0)
+	fetchButton = createControl(hwnd, "BUTTON", "获取模型", wsChild|wsVisible|wsTabStop, 28, 304, 132, 38, controlFetch)
+	launchButton = createControl(hwnd, "BUTTON", "保存并启动 Codex", wsChild|wsVisible|wsTabStop, 174, 304, 192, 38, controlLaunch)
+	updateButton = createControl(hwnd, "BUTTON", "检查云桥更新", wsChild|wsVisible|wsTabStop, 380, 304, 176, 38, controlUpdate)
+	modelsLabel = createLabel(hwnd, "API 返回的模型", 28, 366, 180, 24, font)
+	modelList = createControl(hwnd, "LISTBOX", "", wsChild|wsVisible|wsBorder|wsVScroll|lbsNotify, 28, 392, 690, 220, 0)
+	statusTitle = createLabel(hwnd, "运行状态", 28, 636, 100, 22, font)
+	statusLabel = createControl(hwnd, "EDIT", "填写接口和 Key 后点击“获取模型”。", wsChild|wsVisible|wsBorder|esAutoHScroll|esReadOnly, 28, 662, 690, 32, 0)
+	progressLabel = createLabel(hwnd, "更新进度  0%", 28, 706, 150, 20, font)
+	progressBar = createControl(hwnd, "msctls_progress32", "", wsChild|wsVisible|wsBorder, 28, 730, 690, 18, 0)
 	procSendMessageW.Call(progressBar, pbmSetRange32, 0, 100)
-	footerLabel = createLabel(hwnd, fmt.Sprintf("云桥服务器更新源  ·  Bridge v%s", appVersion), 28, 690, 360, 20, font)
-	layoutControls(744, 703)
+	footerLabel = createLabel(hwnd, fmt.Sprintf("云桥服务器更新源  ·  Bridge v%s", appVersion), 28, 758, 360, 20, font)
+	layoutControls(744, 771)
 
-	for _, handle := range []uintptr{baseEdit, keyEdit, fetchButton, launchButton, updateButton, modelList, statusLabel} {
+	for _, handle := range []uintptr{advertisementLabel, advertisementButton, baseEdit, keyEdit, fetchButton, launchButton, updateButton, modelList, statusLabel} {
 		procSendMessageW.Call(handle, wmSetFont, font, 1)
 	}
 	if currentConfig.BaseURL != "" {
@@ -360,18 +390,22 @@ func createControls(hwnd uintptr) {
 		fillModels(currentModels)
 		setStatus(fmt.Sprintf("已载入上次保存的 %d 个模型。", len(currentModels)))
 	}
+	setAdvertisementVisibility(currentAdvertisement.Enabled)
+	startAdvertisementRefresh()
 }
 
 func layoutControls(width, height int) {
 	if brandLabel == 0 || width <= 0 || height <= 0 {
 		return
 	}
-	layout := calculateWindowLayout(width, height)
+	lastClientWidth, lastClientHeight = width, height
+	layout := calculateWindowLayoutWithAdvertisement(width, height, currentAdvertisement.Enabled)
 	items := []struct {
 		handle uintptr
 		rect   controlRect
 	}{
 		{brandLabel, layout.Brand}, {subtitleLabel, layout.Subtitle},
+		{advertisementLabel, layout.Advertisement}, {advertisementButton, layout.AdvertisementButton},
 		{baseLabel, layout.BaseLabel}, {baseEdit, layout.BaseEdit},
 		{keyLabel, layout.KeyLabel}, {keyEdit, layout.KeyEdit},
 		{fetchButton, layout.FetchButton}, {launchButton, layout.LaunchButton},
@@ -382,6 +416,66 @@ func layoutControls(width, height int) {
 	}
 	for _, item := range items {
 		procMoveWindow.Call(item.handle, uintptr(item.rect.X), uintptr(item.rect.Y), uintptr(item.rect.Width), uintptr(item.rect.Height), 1)
+	}
+}
+
+func openAdvertisementDetails() {
+	if !currentAdvertisement.Enabled || currentAdvertisement.URL == "" {
+		return
+	}
+	detailURL := currentAdvertisement.URL
+	result, _, _ := procShellExecuteW.Call(
+		mainWindow,
+		uintptr(unsafe.Pointer(utf16("open"))),
+		uintptr(unsafe.Pointer(utf16(detailURL))),
+		0, 0, swShow,
+	)
+	if result <= 32 {
+		messageBox("无法打开详情页面，请稍后重试。\n"+detailURL, 0x10)
+	}
+}
+
+func advertisementCachePath() string {
+	return filepath.Join(applicationDirectory(), "ad.json")
+}
+
+func startAdvertisementRefresh() {
+	go func() {
+		config, _, err := fetchAdvertisementConfig(newAdvertisementHTTPClient(), advertisementConfigURL)
+		if err != nil {
+			diagnosticLog("advertisement.remote_failed", err.Error())
+			return
+		}
+		if err := saveAdvertisementCache(advertisementCachePath(), config); err != nil {
+			diagnosticLog("advertisement.cache_failed", err.Error())
+		}
+		advertisementMutex.Lock()
+		pendingAdvertisement = config
+		advertisementMutex.Unlock()
+		procPostMessageW.Call(mainWindow, wmAppAdvertisement, 0, 0)
+	}()
+}
+
+func applyPendingAdvertisement() {
+	advertisementMutex.Lock()
+	config := pendingAdvertisement
+	pendingAdvertisement = advertisementConfig{}
+	advertisementMutex.Unlock()
+	currentAdvertisement = config
+	setText(advertisementLabel, config.labelText())
+	setText(advertisementButton, config.ButtonText)
+	setAdvertisementVisibility(config.Enabled)
+}
+
+func setAdvertisementVisibility(visible bool) {
+	command := uintptr(swHide)
+	if visible {
+		command = swShow
+	}
+	procShowWindow.Call(advertisementLabel, command)
+	procShowWindow.Call(advertisementButton, command)
+	if lastClientWidth > 0 && lastClientHeight > 0 {
+		layoutControls(lastClientWidth, lastClientHeight)
 	}
 }
 
