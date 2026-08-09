@@ -5,10 +5,11 @@ type controlRect struct {
 }
 
 type windowLayout struct {
-	Brand, Subtitle, BaseLabel, BaseEdit, KeyLabel, KeyEdit controlRect
-	FetchButton, LaunchButton, UpdateButton                 controlRect
-	ModelsLabel, ModelsList, StatusTitle, StatusEdit        controlRect
-	ProgressLabel, ProgressBar, Footer                      controlRect
+	Brand, Subtitle, Advertisement, AdvertisementButton controlRect
+	BaseLabel, BaseEdit, KeyLabel, KeyEdit              controlRect
+	FetchButton, LaunchButton, UpdateButton             controlRect
+	ModelsLabel, ModelsList, StatusTitle, StatusEdit    controlRect
+	ProgressLabel, ProgressBar, Footer                  controlRect
 }
 
 func calculateWindowLayout(width, height int) windowLayout {
@@ -24,9 +25,13 @@ func calculateWindowLayout(width, height int) windowLayout {
 	}
 	contentWidth := width - margin*2
 
-	buttonsY := 240
+	advertisementY := 82
+	advertisementHeight := 50
+	advertisementButtonWidth := 104
+	advertisementGap := 10
+	buttonsY := 304
 	buttonHeight := 38
-	modelsLabelY := 302
+	modelsLabelY := 366
 	if contentWidth >= 610 {
 		gap := 14
 		fetchWidth := 132
@@ -56,19 +61,21 @@ func calculateWindowLayout(width, height int) windowLayout {
 	}
 
 	layout := windowLayout{
-		Brand:         controlRect{margin, 20, contentWidth, 26},
-		Subtitle:      controlRect{margin, 48, contentWidth, 22},
-		BaseLabel:     controlRect{margin, 86, contentWidth, 24},
-		BaseEdit:      controlRect{margin, 112, contentWidth, 32},
-		KeyLabel:      controlRect{margin, 160, contentWidth, 24},
-		KeyEdit:       controlRect{margin, 186, contentWidth, 32},
-		ModelsLabel:   controlRect{margin, modelsLabelY, contentWidth, 24},
-		ModelsList:    controlRect{margin, modelsTop, contentWidth, modelsHeight},
-		StatusTitle:   controlRect{margin, statusTitleY, contentWidth, 22},
-		StatusEdit:    controlRect{margin, statusEditY, contentWidth, 32},
-		ProgressLabel: controlRect{margin, progressLabelY, contentWidth, 20},
-		ProgressBar:   controlRect{margin, progressBarY, contentWidth, 18},
-		Footer:        controlRect{margin, footerY, contentWidth, 20},
+		Brand:               controlRect{margin, 20, contentWidth, 26},
+		Subtitle:            controlRect{margin, 48, contentWidth, 22},
+		Advertisement:       controlRect{margin, advertisementY, contentWidth - advertisementButtonWidth - advertisementGap, advertisementHeight},
+		AdvertisementButton: controlRect{width - margin - advertisementButtonWidth, advertisementY + 7, advertisementButtonWidth, advertisementHeight - 14},
+		BaseLabel:           controlRect{margin, 150, contentWidth, 24},
+		BaseEdit:            controlRect{margin, 176, contentWidth, 32},
+		KeyLabel:            controlRect{margin, 224, contentWidth, 24},
+		KeyEdit:             controlRect{margin, 250, contentWidth, 32},
+		ModelsLabel:         controlRect{margin, modelsLabelY, contentWidth, 24},
+		ModelsList:          controlRect{margin, modelsTop, contentWidth, modelsHeight},
+		StatusTitle:         controlRect{margin, statusTitleY, contentWidth, 22},
+		StatusEdit:          controlRect{margin, statusEditY, contentWidth, 32},
+		ProgressLabel:       controlRect{margin, progressLabelY, contentWidth, 20},
+		ProgressBar:         controlRect{margin, progressBarY, contentWidth, 18},
+		Footer:              controlRect{margin, footerY, contentWidth, 20},
 	}
 	if contentWidth >= 610 {
 		gap := 14

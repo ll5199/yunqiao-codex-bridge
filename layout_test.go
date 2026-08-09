@@ -27,11 +27,26 @@ func TestWindowLayoutUsesNarrowButtonRows(t *testing.T) {
 }
 
 func TestWindowLayoutKeepsBottomControlsInsideClient(t *testing.T) {
-	layout := calculateWindowLayout(520, 600)
-	if layout.Footer.Y+layout.Footer.Height > 600 {
+	layout := calculateWindowLayout(520, 680)
+	if layout.Footer.Y+layout.Footer.Height > 680 {
 		t.Fatal("footer exceeds client area")
 	}
 	if layout.ModelsList.Height < 80 {
 		t.Fatal("model list became unusably short")
+	}
+}
+
+func TestWindowLayoutKeepsAdvertisementUsable(t *testing.T) {
+	for _, width := range []int{520, 760, 960} {
+		layout := calculateWindowLayout(width, 720)
+		if layout.Advertisement.Width < 300 {
+			t.Fatalf("advertisement is too narrow at width %d", width)
+		}
+		if layout.Advertisement.X+layout.Advertisement.Width >= layout.AdvertisementButton.X {
+			t.Fatalf("advertisement overlaps detail button at width %d", width)
+		}
+		if layout.AdvertisementButton.Width < 96 {
+			t.Fatalf("advertisement detail button is unusable at width %d", width)
+		}
 	}
 }
