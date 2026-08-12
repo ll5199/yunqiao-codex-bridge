@@ -1,9 +1,14 @@
-name: Release Bridge Source
+name: Release Yunqiao Codex Bridge
 
 on:
   push:
-    tags:
-      - "v*"
+    branches:
+      - main
+    paths:
+      - "config.go"
+      - "RELEASE_NOTES_v*.md"
+      - ".github/workflows/release.yml"
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -16,15 +21,49 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: "1.26.x"
+      - name: Resolve release version
+        id: version
+        shell: bash
+        run: |
+          version="$(sed -n 's/.*appVersion[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' config.go | head -1)"
+          test -n "$version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+      - name: Check existing release
+        id: existing
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+        shell: bash
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
       - name: Test
+        if: steps.existing.outputs.exists != 'true'
         run: go test ./...
       - name: Build Windows x64
+        if: steps.existing.outputs.exists != 'true'
         env:
           GOOS: windows
           GOARCH: amd64
           CGO_ENABLED: "0"
-        run: go build -buildvcs=false -trimpath -ldflags="-s -w -H=windowsgui" -o /tmp/YunqiaoCodexBridge.exe .
-      - name: Publish source release
+        run: |
+          go build -buildvcs=false -trimpath -ldflags="-s -w -H=windowsgui" -o /tmp/YunqiaoCodexBridge.exe .
+          cd /tmp
+          sha256sum YunqiaoCodexBridge.exe > YunqiaoCodexBridge.exe.sha256
+      - name: Publish GitHub release
+        if: steps.existing.outputs.exists != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "${GITHUB_REF_NAME}" --generate-notes --title "Yunqiao Codex Bridge ${GITHUB_REF_NAME}"
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          gh release create "$TAG" \
+            /tmp/YunqiaoCodexBridge.exe \
+            /tmp/YunqiaoCodexBridge.exe.sha256 \
+            --target "$GITHUB_SHA" \
+            --title "云桥（熙楠）$TAG" \
+            --notes-file "RELEASE_NOTES_v$VERSION.md"
