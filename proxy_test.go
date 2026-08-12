@@ -2,7 +2,9 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -326,9 +328,23 @@ func TestAPIProxyRoutesGeminiImageToNativeEndpoint(t *testing.T) {
 	if !bytes.Contains(converted, []byte("图片已生成")) {
 		t.Fatalf("unexpected converted Gemini response: %s", converted)
 	}
-	if images := proxy.store.list(); len(images) != 1 {
-		t.Fatalf("expected captured Gemini image, got %#v", images)
+	expectedSource := "data:image/png;base64," + image
+	expectedID := imageID(expectedSource)
+	found := false
+	for _, stored := range proxy.store.list() {
+		if stored.ID == expectedID {
+			found = true
+			break
+		}
 	}
+	if !found {
+		t.Fatalf("expected captured Gemini image %s, got %#v", expectedID, proxy.store.list())
+	}
+}
+
+func imageID(source string) string {
+	sum := sha256.Sum256([]byte(source))
+	return hex.EncodeToString(sum[:12])
 }
 
 func TestCompatibilityErrorIsReadableResponsesStream(t *testing.T) {

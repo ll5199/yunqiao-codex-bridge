@@ -5,11 +5,11 @@
   window.__yunqiaoCodexModels = Array.from(new Set(incoming));
   window.__yunqiaoCodexDefaultModel = String(window.__YUNQIAO_INJECT_DEFAULT__ || window.__yunqiaoCodexModels[0] || "");
 
-  if (window.__yunqiaoCodexBridgeInstalled === "1.3.3") {
+  if (window.__yunqiaoCodexBridgeInstalled === "1.4.1") {
     window.__yunqiaoCodexBridgeRefresh?.();
     return;
   }
-  window.__yunqiaoCodexBridgeInstalled = "1.3.3";
+  window.__yunqiaoCodexBridgeInstalled = "1.4.1";
 
   function installChineseLocale() {
     const locale = "zh-CN";
@@ -178,21 +178,27 @@
   installChineseLocale();
 
   const names = () => Array.isArray(window.__yunqiaoCodexModels) ? window.__yunqiaoCodexModels : [];
-  const descriptor = (model) => ({
-    model,
-    id: model,
-    slug: model,
-    name: model,
-    displayName: model,
-    description: "Yunqiao API",
-    hidden: false,
-    isDefault: model === window.__yunqiaoCodexDefaultModel,
-    defaultReasoningEffort: "medium",
-    supportedReasoningEfforts: ["minimal", "low", "medium", "high", "xhigh"].map((reasoningEffort) => ({
-      reasoningEffort,
-      description: `${reasoningEffort} effort`,
-    })),
-  });
+  const descriptor = (model, template = null) => {
+    const value = template && typeof template === "object" ? { ...template } : {};
+    value.model = model;
+    value.id = model;
+    value.slug = model;
+    value.name = model;
+    value.displayName = model;
+    value.display_name = model;
+    value.description = "Yunqiao API";
+    value.hidden = false;
+    value.isDefault = model === window.__yunqiaoCodexDefaultModel;
+    value.is_default = value.isDefault;
+    if (!value.defaultReasoningEffort) value.defaultReasoningEffort = "medium";
+    if (!Array.isArray(value.supportedReasoningEfforts) || value.supportedReasoningEfforts.length === 0) {
+      value.supportedReasoningEfforts = ["low", "medium", "high"].map((reasoningEffort) => ({
+        reasoningEffort,
+        description: `${reasoningEffort} effort`,
+      }));
+    }
+    return value;
+  };
 
   function patchNameArray(value) {
     if (!Array.isArray(value) || !value.every((item) => typeof item === "string")) return false;
@@ -213,6 +219,7 @@
     }
     let changed = false;
     const existing = new Map(value.map((item) => [item.model, item]));
+    const template = value.find((item) => item && typeof item === "object") || null;
     for (const item of value) {
       if (names().includes(item.model) && item.hidden !== false) {
         item.hidden = false;
@@ -221,7 +228,7 @@
     }
     for (const model of names()) {
       if (!existing.has(model)) {
-        value.push(descriptor(model));
+        value.push(descriptor(model, template));
         changed = true;
       }
     }
@@ -278,22 +285,26 @@
     return changed;
   }
 
-  function patchGraph(root, visited = new WeakSet(), depth = 0) {
-    if (!root || typeof root !== "object" || visited.has(root) || depth > 6) return false;
-    visited.add(root);
-    let changed = patchContainer(root);
-    if (root instanceof Element || root === window || root === document) return changed;
-    for (const key of Object.keys(root)) {
-      if (["ownerDocument", "parentElement", "parentNode", "children", "childNodes"].includes(key)) continue;
-      let value;
-      try {
-        value = root[key];
-      } catch {
-        continue;
-      }
-      if (value && typeof value === "object" && patchGraph(value, visited, depth + 1)) changed = true;
+  function modelResponseLooksPatchable(value) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+    const arrays = [
+      value.models,
+      value.data,
+      value.result,
+      value.pages?.[0]?.data,
+      value.result?.data,
+      value.result?.models,
+      value.message?.result?.data,
+      value.message?.result?.models,
+    ];
+    if (arrays.some((items) => Array.isArray(items) && items.length > 0 &&
+        items.every((item) => item && typeof item === "object" && typeof item.model === "string"))) {
+      return true;
     }
-    return changed;
+    const hasContainerSignal = ["defaultModel", "default_model", "availableModels", "available_models",
+      "hiddenModels", "hidden_models", "modelMetadata", "model_metadata"].some((key) => key in value);
+    return hasContainerSignal && Array.isArray(value.models) &&
+      value.models.every((item) => typeof item === "string");
   }
 
   const capturedImages = window.__yunqiaoGeneratedImages = window.__yunqiaoGeneratedImages || [];
@@ -619,7 +630,7 @@
       const payload = await original.apply(this, args);
       try {
         captureImages(payload);
-        patchGraph(payload);
+        if (modelResponseLooksPatchable(payload)) patchContainer(payload);
       } catch {
       }
       return payload;
@@ -628,26 +639,25 @@
     Response.prototype.json = patched;
   }
 
-  const requestIds = new Set();
-  if (!window.__yunqiaoDispatchEventPatched) {
-    window.__yunqiaoDispatchEventPatched = true;
-    const originalDispatchEvent = window.dispatchEvent;
-    window.dispatchEvent = function (event) {
+  const requestIds = window.__yunqiaoModelListRequestIds = window.__yunqiaoModelListRequestIds || new Set();
+  if (!window.__yunqiaoModelMessagePatchInstalled) {
+    window.__yunqiaoModelMessagePatchInstalled = true;
+    window.addEventListener("codex-message-from-view", (event) => {
       try {
         const detail = event?.detail;
         const request = detail?.request;
-        if (event?.type === "codex-message-from-view" && detail?.type === "mcp-request" && request?.method === "model/list") {
+        if (detail?.type === "mcp-request" && request?.method === "model/list") {
           request.params = { ...(request.params || {}), includeHidden: true };
-          if (request.id != null) requestIds.add(String(request.id));
-        }
-        if (event?.type === "message") {
-          captureImages(event.data);
-          patchMcpResponse(event.data);
+          if (request.id != null) {
+            const requestId = String(request.id);
+            requestIds.add(requestId);
+            if (requestIds.size > 64) requestIds.delete(requestIds.values().next().value);
+            setTimeout(() => requestIds.delete(requestId), 30000);
+          }
         }
       } catch {
       }
-      return originalDispatchEvent.call(this, event);
-    };
+    }, true);
     window.addEventListener("message", (event) => {
       try {
         captureImages(event?.data);
@@ -662,9 +672,12 @@
     if (data?.type !== "mcp-response") return false;
     const message = data.message || data.response;
     const id = message?.id == null ? "" : String(message.id);
-    if (requestIds.size && !requestIds.has(id)) return false;
+    if (requestIds.size === 0 || !requestIds.has(id)) return false;
     requestIds.delete(id);
-    return patchGraph(data);
+    let changed = false;
+    if (patchModelArray(message?.result?.data, true)) changed = true;
+    if (patchModelArray(message?.result?.models, true)) changed = true;
+    return changed;
   }
 
   function assetURL(namePart) {
@@ -690,45 +703,93 @@
     return "";
   }
 
+  function appServerAssetURLs() {
+    const urls = [
+      ...Array.from(document.scripts || []).map((item) => item.src),
+      ...Array.from(document.querySelectorAll("link[href]") || []).map((item) => item.href),
+      ...performance.getEntriesByType("resource").map((item) => item.name),
+    ].filter((value) => value && value.includes("/assets/") && value.split("?")[0].endsWith(".js"));
+    const preferred = urls.filter((value) => /use-host-config|app-server-manager-signals|app-initial|app-main|page-|signals|server-manager/i.test(value));
+    return Array.from(new Set(preferred)).slice(0, 16);
+  }
+
+  function appServerCandidates(module) {
+    const result = [];
+    const seen = new Set();
+    const add = (value) => {
+      if (!value || typeof value !== "object" || seen.has(value)) return;
+      seen.add(value);
+      result.push(value);
+    };
+    for (const value of Object.values(module || {})) {
+      add(value);
+      if (typeof value?.get === "function") {
+        try { add(value.get()); } catch {
+        }
+        try { add(value.get("local")); } catch {
+        }
+      }
+      if (value && typeof value === "object") {
+        try { Object.values(value).slice(0, 100).forEach(add); } catch {
+        }
+      }
+    }
+    return result;
+  }
+
   let appServerPatchAttempts = 0;
+  let appServerPatchDisabled = false;
   async function patchAppServer() {
-    if (window.__yunqiaoAppServerPatched || appServerPatchAttempts > 12) return;
+    if (window.__yunqiaoAppServerPatched || appServerPatchDisabled) return;
     appServerPatchAttempts++;
     try {
-      const source = assetURL("app-server-manager-signals-") || await assetURLFromScripts("app-server-manager-signals-");
-      if (!source) return;
-      const module = await import(source);
+      const sources = [];
+      for (const prefix of ["use-host-config-", "app-server-manager-signals-"]) {
+        const source = assetURL(prefix) || await assetURLFromScripts(prefix);
+        if (source) sources.push(source);
+      }
+      sources.push(...appServerAssetURLs());
       let count = 0;
-      for (const candidate of Object.values(module)) {
-        const clients = [candidate];
-        if (candidate && typeof candidate.get === "function") {
-          try {
-            clients.push(candidate.get());
-          } catch {
-          }
-        }
-        for (const client of clients) {
-          if (!client || typeof client.sendRequest !== "function" || client.__yunqiaoPatched) continue;
+      for (const source of Array.from(new Set(sources)).slice(0, 16)) {
+        let module;
+        try { module = await import(source); } catch { continue; }
+        for (const client of appServerCandidates(module)) {
+          if (!client || typeof client.sendRequest !== "function" || client.__yunqiaoModelRequestPatched) continue;
           const original = client.sendRequest.bind(client);
           client.sendRequest = async function (method, params, options) {
             const result = await original(method, params, options);
             captureImages(result);
             const actual = method === "send-cli-request-for-host" && params?.method ? String(params.method) : String(method || "");
-            if (actual === "list-models-for-host" || actual === "model/list") {
+            if (actual === "list-models-for-host") {
               try {
-                patchGraph(result);
+                if (Array.isArray(result)) patchModelArray(result, true);
+                if (Array.isArray(result?.data)) patchModelArray(result.data, true);
+                if (Array.isArray(result?.models)) patchModelArray(result.models, true);
               } catch {
               }
             }
             return result;
           };
-          client.__yunqiaoPatched = true;
+          client.__yunqiaoModelRequestPatched = true;
           count++;
         }
       }
       if (count) window.__yunqiaoAppServerPatched = true;
     } catch {
     }
+    if (!window.__yunqiaoAppServerPatched && appServerPatchAttempts >= 8) appServerPatchDisabled = true;
+  }
+
+  function patchStatsigModelConfig(config) {
+    if (!config?.value || typeof config.value !== "object") return config;
+    const available = Array.isArray(config.value.available_models) ? [...config.value.available_models] : [];
+    for (const model of names()) if (!available.includes(model)) available.push(model);
+    const next = { ...config.value, available_models: available };
+    if (window.__yunqiaoCodexDefaultModel) next.default_model = window.__yunqiaoCodexDefaultModel;
+    try { config.value = next; } catch {
+      return { ...config, value: next };
+    }
+    return config;
   }
 
   function patchStatsig() {
@@ -742,35 +803,13 @@
         const original = client.getDynamicConfig.bind(client);
         client.getDynamicConfig = (name, options) => {
           const config = original(name, options);
-          try {
-            patchGraph(config);
-          } catch {
-          }
-          return config;
+          return String(name) === "107580212" ? patchStatsigModelConfig(config) : config;
         };
         client.__yunqiaoPatched = true;
       }
       try {
-        patchGraph(client.getDynamicConfig("107580212", { disableExposureLog: true }));
+        patchStatsigModelConfig(client.getDynamicConfig("107580212", { disableExposureLog: true }));
       } catch {
-      }
-    }
-  }
-
-  function patchReactState() {
-    const visited = new WeakSet();
-    const nodes = [
-      document.body,
-      ...document.querySelectorAll("[role='menu'], [role='dialog'], [role='listbox'], [data-radix-popper-content-wrapper]"),
-    ].filter(Boolean);
-    for (const node of nodes.slice(0, 240)) {
-      for (const key of Object.keys(node)) {
-        if (key.startsWith("__reactFiber") || key.startsWith("__reactInternalInstance") || key.startsWith("__reactProps")) {
-          try {
-            patchGraph(node[key], visited);
-          } catch {
-          }
-        }
       }
     }
   }
@@ -807,7 +846,6 @@
       }
       lastConversationKey = activeKey;
       patchStatsig();
-      patchReactState();
       cleanupSidebarArtifacts();
       void pollProxyImages();
       renderCapturedImages();
@@ -817,6 +855,8 @@
         models: names().length,
         defaultModel: window.__yunqiaoCodexDefaultModel,
         appServerPatched: !!window.__yunqiaoAppServerPatched,
+        appServerPatchDisabled,
+        heartbeat: Date.now(),
       };
     }, 50);
   }

@@ -5,105 +5,109 @@ type controlRect struct {
 }
 
 type windowLayout struct {
-	Brand, Subtitle, Advertisement, AdvertisementButton controlRect
-	BaseLabel, BaseEdit, KeyLabel, KeyEdit              controlRect
-	FetchButton, LaunchButton, UpdateButton             controlRect
-	ModelsLabel, ModelsList, StatusTitle, StatusEdit    controlRect
-	ProgressLabel, ProgressBar, Footer                  controlRect
+	Brand, Subtitle, ModeAccount, ModeExternal           controlRect
+	Advertisement, AdvertisementButton                   controlRect
+	BaseLabel, BaseEdit, KeyLabel, KeyEdit               controlRect
+	FetchButton, LaunchButton, UpdateButton              controlRect
+	ModelsLabel, ModelsList                              controlRect
+	AccountEdit, PasswordEdit, LoginButton, LogoutButton controlRect
+	MemberInfo, ProviderLabel, ProviderCombo             controlRect
+	AccountModelLabel, AccountModelCombo                 controlRect
+	UsageTitle, UsageList                                controlRect
+	StatusTitle, StatusEdit, ProgressLabel, ProgressBar  controlRect
+	Footer                                               controlRect
 }
 
 func calculateWindowLayout(width, height int) windowLayout {
-	return calculateWindowLayoutWithAdvertisement(width, height, true)
+	return calculateWindowLayoutForMode(width, height, true, false)
 }
 
 func calculateWindowLayoutWithAdvertisement(width, height int, advertisementEnabled bool) windowLayout {
+	return calculateWindowLayoutForMode(width, height, advertisementEnabled, false)
+}
+
+func calculateWindowLayoutForMode(width, height int, advertisementEnabled, accountMode bool) windowLayout {
 	if width < 520 {
 		width = 520
 	}
-	if height < 600 {
-		height = 600
+	if height < 720 {
+		height = 720
 	}
-	margin := 28
-	if width < 660 {
-		margin = 20
-	}
+	margin := 24
 	contentWidth := width - margin*2
+	gap := 12
+	buttonWidth := 170
+	buttonRowWidth := buttonWidth*2 + gap
+	buttonX := margin + (contentWidth-buttonRowWidth)/2
 
-	advertisementY := 82
-	advertisementHeight := 50
-	advertisementButtonWidth := 104
-	advertisementGap := 10
-	buttonsY := 304
-	buttonHeight := 38
-	modelsLabelY := 366
-	if contentWidth >= 610 {
-		gap := 14
-		fetchWidth := 132
-		launchWidth := 192
-		updateWidth := 176
-		returnWidth := fetchWidth + launchWidth + updateWidth + gap*2
-		if returnWidth > contentWidth {
-			updateWidth -= returnWidth - contentWidth
-		}
-		// Buttons remain left aligned so extra horizontal space goes to the
-		// fields and model list, where it is more useful.
-		_ = updateWidth
-	} else {
-		buttonHeight = 34
-		modelsLabelY = 326
-	}
-	if !advertisementEnabled {
-		const advertisementSpace = 68
-		buttonsY -= advertisementSpace
-		modelsLabelY -= advertisementSpace
-	}
-
-	statusTitleY := height - 146
+	statusTitleY := height - 144
 	statusEditY := height - 120
 	progressLabelY := height - 76
 	progressBarY := height - 52
 	footerY := height - 26
-	modelsTop := modelsLabelY + 26
-	modelsHeight := statusTitleY - modelsTop - 18
-	if modelsHeight < 86 {
-		modelsHeight = 86
-	}
 
 	layout := windowLayout{
-		Brand:               controlRect{margin, 20, contentWidth, 26},
-		Subtitle:            controlRect{margin, 48, contentWidth, 22},
-		Advertisement:       controlRect{margin, advertisementY, contentWidth - advertisementButtonWidth - advertisementGap, advertisementHeight},
-		AdvertisementButton: controlRect{width - margin - advertisementButtonWidth, advertisementY + 7, advertisementButtonWidth, advertisementHeight - 14},
-		BaseLabel:           controlRect{margin, positionWithAdvertisement(150, advertisementEnabled), contentWidth, 24},
-		BaseEdit:            controlRect{margin, positionWithAdvertisement(176, advertisementEnabled), contentWidth, 32},
-		KeyLabel:            controlRect{margin, positionWithAdvertisement(224, advertisementEnabled), contentWidth, 24},
-		KeyEdit:             controlRect{margin, positionWithAdvertisement(250, advertisementEnabled), contentWidth, 32},
-		ModelsLabel:         controlRect{margin, modelsLabelY, contentWidth, 24},
-		ModelsList:          controlRect{margin, modelsTop, contentWidth, modelsHeight},
-		StatusTitle:         controlRect{margin, statusTitleY, contentWidth, 22},
-		StatusEdit:          controlRect{margin, statusEditY, contentWidth, 32},
-		ProgressLabel:       controlRect{margin, progressLabelY, contentWidth, 20},
-		ProgressBar:         controlRect{margin, progressBarY, contentWidth, 18},
-		Footer:              controlRect{margin, footerY, contentWidth, 20},
+		Brand:         controlRect{margin, 18, contentWidth, 26},
+		Subtitle:      controlRect{margin, 46, contentWidth, 22},
+		ModeAccount:   controlRect{margin, 78, 112, 30},
+		ModeExternal:  controlRect{margin + 126, 78, 112, 30},
+		StatusTitle:   controlRect{margin, statusTitleY, contentWidth, 22},
+		StatusEdit:    controlRect{margin, statusEditY, contentWidth, 32},
+		ProgressLabel: controlRect{margin, progressLabelY, contentWidth, 20},
+		ProgressBar:   controlRect{margin, progressBarY, contentWidth, 18},
+		Footer:        controlRect{margin, footerY, contentWidth, 20},
 	}
-	if contentWidth >= 610 {
-		gap := 14
-		layout.FetchButton = controlRect{margin, buttonsY, 132, buttonHeight}
-		layout.LaunchButton = controlRect{margin + 132 + gap, buttonsY, 192, buttonHeight}
-		layout.UpdateButton = controlRect{margin + 132 + gap + 192 + gap, buttonsY, 176, buttonHeight}
+
+	adButtonWidth := 142
+	adGap := 10
+	if accountMode {
+		loginWidth := contentWidth
+		if loginWidth > 650 {
+			loginWidth = 650
+		}
+		loginX := margin + (contentWidth-loginWidth)/2
+		inputGap := 10
+		inputWidth := (loginWidth - inputGap) / 2
+		loginButtonWidth := 126
+		loginButtonsWidth := loginButtonWidth*2 + inputGap
+		loginButtonX := margin + (contentWidth-loginButtonsWidth)/2
+		comboWidth := (contentWidth - gap) / 2
+		layout.AccountEdit = controlRect{loginX, 120, inputWidth, 34}
+		layout.PasswordEdit = controlRect{loginX + inputWidth + inputGap, 120, loginWidth - inputWidth - inputGap, 34}
+		layout.LoginButton = controlRect{loginButtonX, 164, loginButtonWidth, 34}
+		layout.LogoutButton = controlRect{loginButtonX + loginButtonWidth + inputGap, 164, loginButtonWidth, 34}
+		layout.MemberInfo = controlRect{margin, 208, contentWidth, 28}
+		layout.ProviderLabel = controlRect{margin, 246, comboWidth, 20}
+		layout.AccountModelLabel = controlRect{margin + comboWidth + gap, 246, comboWidth, 20}
+		layout.ProviderCombo = controlRect{margin, 268, comboWidth, 34}
+		layout.AccountModelCombo = controlRect{margin + comboWidth + gap, 268, comboWidth, 34}
+		adY := 318
+		layout.Advertisement = controlRect{margin, adY, contentWidth - adButtonWidth - adGap, 48}
+		layout.AdvertisementButton = controlRect{width - margin - adButtonWidth, adY + 6, adButtonWidth, 36}
+		layout.LaunchButton = controlRect{buttonX, 382, buttonWidth, 38}
+		layout.UpdateButton = controlRect{buttonX + buttonWidth + gap, 382, buttonWidth, 38}
+		layout.UsageTitle = controlRect{margin, 440, contentWidth, 22}
+		// A single list owns all three rows. Windows can resize this control
+		// without independently wrapping or repositioning row text.
+		layout.UsageList = controlRect{margin, 466, contentWidth, 82}
 	} else {
-		gap := 10
-		firstWidth := (contentWidth - gap) / 2
-		layout.FetchButton = controlRect{margin, buttonsY, firstWidth, buttonHeight}
-		layout.LaunchButton = controlRect{margin + firstWidth + gap, buttonsY, contentWidth - firstWidth - gap, buttonHeight}
-		layout.UpdateButton = controlRect{margin, buttonsY + buttonHeight + 8, contentWidth, buttonHeight}
+		layout.BaseLabel = controlRect{margin, 120, contentWidth, 22}
+		layout.BaseEdit = controlRect{margin, 144, contentWidth, 34}
+		layout.KeyLabel = controlRect{margin, 190, contentWidth, 22}
+		fetchWidth := 142
+		layout.KeyEdit = controlRect{margin, 214, contentWidth - fetchWidth - gap, 34}
+		layout.FetchButton = controlRect{width - margin - fetchWidth, 214, fetchWidth, 34}
+		layout.ModelsLabel = controlRect{margin, 262, contentWidth, 22}
+		layout.ModelsList = controlRect{margin, 286, contentWidth, 116}
+		adY := 418
+		layout.Advertisement = controlRect{margin, adY, contentWidth - adButtonWidth - adGap, 48}
+		layout.AdvertisementButton = controlRect{width - margin - adButtonWidth, adY + 6, adButtonWidth, 36}
+		layout.LaunchButton = controlRect{buttonX, 482, buttonWidth, 38}
+		layout.UpdateButton = controlRect{buttonX + buttonWidth + gap, 482, buttonWidth, 38}
+	}
+	if !advertisementEnabled {
+		layout.Advertisement = controlRect{}
+		layout.AdvertisementButton = controlRect{}
 	}
 	return layout
-}
-
-func positionWithAdvertisement(position int, enabled bool) int {
-	if enabled {
-		return position
-	}
-	return position - 68
 }

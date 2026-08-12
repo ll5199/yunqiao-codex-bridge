@@ -34,14 +34,20 @@ type cdpTarget struct {
 	WebSocketDebuggerURL string `json:"webSocketDebuggerUrl"`
 }
 
+const rendererBridgeVersion = "1.4.1"
+
+func rendererExpression(models []string, defaultModel string) string {
+	modelJSON, _ := json.Marshal(models)
+	defaultJSON, _ := json.Marshal(defaultModel)
+	return "window.__YUNQIAO_INJECT_MODELS__=" + string(modelJSON) +
+		";window.__YUNQIAO_INJECT_DEFAULT__=" + string(defaultJSON) + ";\n" + rendererInjection
+}
+
 func injectIntoCodex(port int, models []string, defaultModel string, progress func(string)) error {
 	if len(models) == 0 {
 		return errors.New("没有可注入的模型")
 	}
-	modelJSON, _ := json.Marshal(models)
-	defaultJSON, _ := json.Marshal(defaultModel)
-	expression := "window.__YUNQIAO_INJECT_MODELS__=" + string(modelJSON) +
-		";window.__YUNQIAO_INJECT_DEFAULT__=" + string(defaultJSON) + ";\n" + rendererInjection
+	expression := rendererExpression(models, defaultModel)
 
 	client := &http.Client{Timeout: 1500 * time.Millisecond}
 	deadline := time.Now().Add(28 * time.Second)
@@ -86,6 +92,79 @@ func injectIntoCodex(port int, models []string, defaultModel string, progress fu
 		return fmt.Errorf("没有连接到 Codex 调试页面：%w", lastError)
 	}
 	return errors.New("没有发现 Codex 调试页面；请确认官方 Codex 已完全退出后再启动")
+}
+
+func maintainCodexInjection(port int, models []string, defaultModel string, done <-chan struct{}, logger func(string, string)) {
+	if len(models) == 0 {
+		return
+	}
+	expression := rendererExpression(models, defaultModel)
+	healthExpression := rendererHealthExpression(len(models), defaultModel)
+	client := &http.Client{Timeout: 1500 * time.Millisecond}
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+	failures := make(map[string]int)
+	for {
+		select {
+		case <-done:
+			return
+		case <-ticker.C:
+		}
+		targets, err := listCDPTargets(client, port)
+		if err != nil {
+			continue
+		}
+		for _, target := range targets {
+			if target.WebSocketDebuggerURL == "" ||
+				(target.Type != "page" && target.Type != "webview") ||
+				strings.HasPrefix(target.URL, "devtools://") {
+				continue
+			}
+			healthy, healthErr := targetBridgeHealthy(target.WebSocketDebuggerURL, healthExpression)
+			if healthErr == nil && healthy {
+				delete(failures, target.ID)
+				continue
+			}
+			if err := injectTarget(target.WebSocketDebuggerURL, expression); err != nil {
+				failures[target.ID]++
+				count := failures[target.ID]
+				if logger != nil && (count == 1 || count%10 == 0) {
+					logger("bridge.reinject_failed", fmt.Sprintf("target=%s error=%s", safeLogID(target.ID), err.Error()))
+				}
+				continue
+			}
+			delete(failures, target.ID)
+			if logger != nil {
+				logger("bridge.reinjected", fmt.Sprintf("target=%s", safeLogID(target.ID)))
+			}
+		}
+	}
+}
+
+func rendererHealthExpression(modelCount int, defaultModel string) string {
+	defaultJSON, _ := json.Marshal(defaultModel)
+	return fmt.Sprintf("(() => { const s=window.__yunqiaoCodexBridgeStatus; return window.__yunqiaoCodexBridgeInstalled===%q && s?.installed===true && s.models===%d && window.__yunqiaoCodexDefaultModel===%s && Date.now()-Number(s.heartbeat||0)<15000; })()", rendererBridgeVersion, modelCount, defaultJSON)
+}
+
+func targetBridgeHealthy(webSocketURL, expression string) (bool, error) {
+	socket, err := dialWebSocket(webSocketURL)
+	if err != nil {
+		return false, err
+	}
+	defer socket.Close()
+	result, err := socket.command("Runtime.evaluate", map[string]any{
+		"expression":    expression,
+		"returnByValue": true,
+	})
+	if err != nil {
+		return false, err
+	}
+	if exception, ok := result["exceptionDetails"]; ok && exception != nil {
+		return false, nil
+	}
+	remote, _ := result["result"].(map[string]any)
+	value, _ := remote["value"].(bool)
+	return value, nil
 }
 
 func listCDPTargets(client *http.Client, port int) ([]cdpTarget, error) {

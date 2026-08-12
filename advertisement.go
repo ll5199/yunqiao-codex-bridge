@@ -15,6 +15,7 @@ import (
 )
 
 const advertisementConfigURL = "https://index.velyn65.com/download/ad.json"
+const consultationButtonText = "点我咨询购买"
 
 type advertisementConfig struct {
 	Enabled         bool   `json:"enabled"`
@@ -31,7 +32,7 @@ func defaultAdvertisementConfig() advertisementConfig {
 		Enabled:     true,
 		Title:       "云桥 API 服务",
 		Description: "多模型统一接入，套餐与使用说明",
-		ButtonText:  "查看详情",
+		ButtonText:  consultationButtonText,
 		URL:         "https://api.velyn65.com",
 	}
 }

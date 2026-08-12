@@ -1,6 +1,8 @@
 package main
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -23,6 +25,28 @@ func TestNormalizeBaseURLAcceptsModelsEndpoint(t *testing.T) {
 	}
 	if value != "https://api.example.com/v1" {
 		t.Fatalf("unexpected base URL: %s", value)
+	}
+}
+
+func TestFetchModelsUsesEnteredKeyAndParsesResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/v1/models" {
+			t.Fatalf("unexpected models path: %s", request.URL.Path)
+		}
+		if request.Header.Get("Authorization") != "Bearer sk-entered" {
+			t.Fatalf("entered key was not forwarded: %q", request.Header.Get("Authorization"))
+		}
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(`{"object":"list","data":[{"id":"gpt-5.6-sol"}]}`))
+	}))
+	defer server.Close()
+
+	models, err := fetchModels(server.URL+"/v1", "sk-entered")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(models) != 1 || models[0] != "gpt-5.6-sol" {
+		t.Fatalf("unexpected models: %#v", models)
 	}
 }
 

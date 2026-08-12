@@ -28,6 +28,7 @@ const (
 	wmSize             = 0x0005
 	wmGetMinMaxInfo    = 0x0024
 	wmCommand          = 0x0111
+	wmKeyDown          = 0x0100
 	wmClose            = 0x0010
 	wmSetFont          = 0x0030
 	wmAppResult        = 0x8001
@@ -36,9 +37,17 @@ const (
 	wmCtlColorList     = 0x0134
 	wmCtlColorBtn      = 0x0135
 	wmCtlColorText     = 0x0138
+	emSetPasswordChar  = 0x00CC
 	lbAddString        = 0x0180
 	lbReset            = 0x0184
 	lbSetCurSel        = 0x0186
+	lbGetCurSel        = 0x0188
+	cbAddString        = 0x0143
+	cbResetContent     = 0x014B
+	cbGetCurSel        = 0x0147
+	cbSetCurSel        = 0x014E
+	bmSetCheck         = 0x00F1
+	emSetCueBanner     = 0x1501
 	pbmSetPos          = 0x0402
 	pbmSetRange32      = 0x0406
 	swHide             = 0
@@ -47,23 +56,39 @@ const (
 	idcArrow           = 32512
 	defaultGUIFont     = 17
 
-	wsOverlappedWindow = 0x00CF0000
-	wsVisible          = 0x10000000
-	wsChild            = 0x40000000
-	wsTabStop          = 0x00010000
-	wsVScroll          = 0x00200000
-	wsBorder           = 0x00800000
-	esAutoHScroll      = 0x0080
-	esPassword         = 0x0020
-	esReadOnly         = 0x0800
-	lbsNotify          = 0x0001
-	ssNotify           = 0x0100
-	ssCenterImage      = 0x0200
+	wsOverlappedWindow  = 0x00CF0000
+	wsVisible           = 0x10000000
+	wsChild             = 0x40000000
+	wsTabStop           = 0x00010000
+	wsVScroll           = 0x00200000
+	wsBorder            = 0x00800000
+	esAutoHScroll       = 0x0080
+	esPassword          = 0x0020
+	esReadOnly          = 0x0800
+	lbsNotify           = 0x0001
+	ssCenterImage       = 0x0200
+	bsAutoRadioButton   = 0x0009
+	bsDefaultPushButton = 0x0001
+	cbsDropDownList     = 0x0003
+	cbsHasStrings       = 0x0200
+	bnClicked           = 0
+	cbnSelChange        = 1
+	enSetFocus          = 0x0100
+	enKillFocus         = 0x0200
+	vkReturn            = 0x0D
 
 	controlFetch         = 101
 	controlLaunch        = 102
 	controlUpdate        = 103
 	controlAdvertisement = 104
+	controlModeAccount   = 105
+	controlModeExternal  = 106
+	controlLogin         = 107
+	controlLogout        = 108
+	controlProvider      = 109
+	controlAccountModel  = 110
+	controlAccountEdit   = 111
+	controlPasswordEdit  = 112
 )
 
 var (
@@ -83,6 +108,7 @@ var (
 	procGetMessageW        = user32.NewProc("GetMessageW")
 	procTranslateMessage   = user32.NewProc("TranslateMessage")
 	procDispatchMessageW   = user32.NewProc("DispatchMessageW")
+	procIsDialogMessageW   = user32.NewProc("IsDialogMessageW")
 	procPostQuitMessage    = user32.NewProc("PostQuitMessage")
 	procDestroyWindow      = user32.NewProc("DestroyWindow")
 	procSendMessageW       = user32.NewProc("SendMessageW")
@@ -176,43 +202,69 @@ type uiUpdate struct {
 	Done        bool
 	Progress    int
 	SetProgress bool
+	Account     *accountEntitlements
+	Provider    string
 }
 
 var (
-	mainWindow           uintptr
-	baseEdit             uintptr
-	keyEdit              uintptr
-	modelList            uintptr
-	statusLabel          uintptr
-	fetchButton          uintptr
-	launchButton         uintptr
-	updateButton         uintptr
-	advertisementLabel   uintptr
-	advertisementButton  uintptr
-	currentAdvertisement advertisementConfig
-	pendingAdvertisement advertisementConfig
-	advertisementMutex   sync.Mutex
-	currentModels        []string
-	currentConfig        appConfig
-	activeProxy          *apiProxy
-	proxyMutex           sync.Mutex
-	updateMutex          sync.Mutex
-	pendingUpdate        uiUpdate
-	lastStatus           string
-	backgroundBrush      uintptr
-	controlBrush         uintptr
-	statusBrush          uintptr
-	brandLabel           uintptr
-	subtitleLabel        uintptr
-	baseLabel            uintptr
-	keyLabel             uintptr
-	modelsLabel          uintptr
-	statusTitle          uintptr
-	footerLabel          uintptr
-	progressBar          uintptr
-	progressLabel        uintptr
-	lastClientWidth      int
-	lastClientHeight     int
+	mainWindow                uintptr
+	baseEdit                  uintptr
+	keyEdit                   uintptr
+	modelList                 uintptr
+	statusLabel               uintptr
+	fetchButton               uintptr
+	launchButton              uintptr
+	updateButton              uintptr
+	advertisementLabel        uintptr
+	advertisementButton       uintptr
+	currentAdvertisement      advertisementConfig
+	pendingAdvertisement      advertisementConfig
+	advertisementMutex        sync.Mutex
+	currentModels             []string
+	currentConfig             appConfig
+	activeProxy               *apiProxy
+	proxyMutex                sync.Mutex
+	updateMutex               sync.Mutex
+	pendingUpdate             uiUpdate
+	lastStatus                string
+	backgroundBrush           uintptr
+	controlBrush              uintptr
+	statusBrush               uintptr
+	brandLabel                uintptr
+	subtitleLabel             uintptr
+	baseLabel                 uintptr
+	keyLabel                  uintptr
+	modelsLabel               uintptr
+	statusTitle               uintptr
+	footerLabel               uintptr
+	progressBar               uintptr
+	progressLabel             uintptr
+	modeAccountButton         uintptr
+	modeExternalButton        uintptr
+	accountEdit               uintptr
+	passwordEdit              uintptr
+	loginButton               uintptr
+	logoutButton              uintptr
+	memberInfoLabel           uintptr
+	providerLabel             uintptr
+	providerCombo             uintptr
+	accountModelLabel         uintptr
+	accountModelCombo         uintptr
+	usageTitle                uintptr
+	usageList                 uintptr
+	accountMode               = true
+	loggedIn                  bool
+	accountProviderKeys       = make(map[string]string)
+	accountModels             = make(map[string][]string)
+	lastClientWidth           int
+	lastClientHeight          int
+	accountPlaceholderActive  bool
+	passwordPlaceholderActive bool
+)
+
+const (
+	accountPlaceholder  = "用户"
+	passwordPlaceholder = "密码"
 )
 
 const (
@@ -274,6 +326,13 @@ func main() {
 		if int32(result) <= 0 {
 			break
 		}
+		if msg.Message == wmKeyDown && msg.WParam == vkReturn && msg.LParam&(1<<30) == 0 && accountMode && (msg.HWnd == accountEdit || msg.HWnd == passwordEdit) {
+			startAccountLogin()
+			continue
+		}
+		if handled, _, _ := procIsDialogMessageW.Call(mainWindow, uintptr(unsafe.Pointer(&msg))); handled != 0 {
+			continue
+		}
 		procTranslateMessage.Call(uintptr(unsafe.Pointer(&msg)))
 		procDispatchMessageW.Call(uintptr(unsafe.Pointer(&msg)))
 	}
@@ -289,10 +348,12 @@ func windowProc(hwnd uintptr, msg uint32, wParam, lParam uintptr) uintptr {
 		return 0
 	case wmGetMinMaxInfo:
 		info := (*minMaxInfo)(unsafe.Pointer(lParam))
-		info.MinTrackSize = point{X: 540, Y: 720}
+		info.MinTrackSize = point{X: 540, Y: 760}
 		return 0
 	case wmCommand:
-		switch int(wParam & 0xffff) {
+		controlID := int(wParam & 0xffff)
+		notification := int((wParam >> 16) & 0xffff)
+		switch controlID {
 		case controlFetch:
 			startFetch()
 		case controlLaunch:
@@ -301,6 +362,26 @@ func windowProc(hwnd uintptr, msg uint32, wParam, lParam uintptr) uintptr {
 			startBridgeUpdate()
 		case controlAdvertisement:
 			openAdvertisementDetails()
+		case controlModeAccount:
+			setConnectionMode(true)
+		case controlModeExternal:
+			setConnectionMode(false)
+		case controlLogin:
+			if notification == bnClicked {
+				startAccountLogin()
+			}
+		case controlLogout:
+			if notification == bnClicked {
+				logoutAccount()
+			}
+		case controlProvider:
+			if notification == cbnSelChange {
+				loadSelectedProviderModels()
+			}
+		case controlAccountEdit:
+			handleLoginPlaceholderFocus(accountEdit, notification == enSetFocus, notification == enKillFocus)
+		case controlPasswordEdit:
+			handleLoginPlaceholderFocus(passwordEdit, notification == enSetFocus, notification == enKillFocus)
 		}
 		return 0
 	case wmAppResult:
@@ -353,17 +434,36 @@ func createControls(hwnd uintptr) {
 	font, _, _ := procGetStockObject.Call(defaultGUIFont)
 	brandLabel = createLabel(hwnd, "云桥（熙楠）", 28, 22, 240, 26, font)
 	subtitleLabel = createLabel(hwnd, "Codex Bridge  ·  安全连接中转 API", 28, 50, 360, 22, font)
+	modeAccountButton = createControl(hwnd, "BUTTON", "云桥账号", wsChild|wsVisible|wsTabStop|bsAutoRadioButton, 28, 82, 112, 30, controlModeAccount)
+	modeExternalButton = createControl(hwnd, "BUTTON", "外部 API", wsChild|wsVisible|wsTabStop|bsAutoRadioButton, 154, 82, 112, 30, controlModeExternal)
+	procSendMessageW.Call(modeAccountButton, bmSetCheck, 1, 0)
+
+	accountEdit = createControl(hwnd, "EDIT", "", wsChild|wsVisible|wsTabStop|wsBorder|esAutoHScroll, 48, 120, 300, 34, controlAccountEdit)
+	passwordEdit = createControl(hwnd, "EDIT", "", wsChild|wsVisible|wsTabStop|wsBorder|esAutoHScroll|esPassword, 358, 120, 300, 34, controlPasswordEdit)
+	showLoginPlaceholder(accountEdit)
+	showLoginPlaceholder(passwordEdit)
+	loginButton = createControl(hwnd, "BUTTON", "登录", wsChild|wsVisible|wsTabStop|bsDefaultPushButton, 242, 164, 126, 34, controlLogin)
+	logoutButton = createControl(hwnd, "BUTTON", "退出", wsChild|wsVisible|wsTabStop, 378, 164, 126, 34, controlLogout)
+	memberInfoLabel = createControl(hwnd, "STATIC", "未登录", wsChild|wsVisible|wsBorder|ssCenterImage, 28, 208, 690, 28, 0)
+	providerLabel = createLabel(hwnd, "上游", 28, 246, 100, 20, font)
+	accountModelLabel = createLabel(hwnd, "模型", 380, 246, 100, 20, font)
+	providerCombo = createControl(hwnd, "COMBOBOX", "", wsChild|wsVisible|wsTabStop|wsVScroll|cbsDropDownList|cbsHasStrings, 28, 268, 336, 160, controlProvider)
+	accountModelCombo = createControl(hwnd, "COMBOBOX", "", wsChild|wsVisible|wsTabStop|wsVScroll|cbsDropDownList|cbsHasStrings, 378, 268, 340, 160, controlAccountModel)
+	usageTitle = createLabel(hwnd, "订阅用量", 28, 440, 120, 22, font)
+	usageList = createControl(hwnd, "LISTBOX", "", wsChild|wsVisible|wsBorder|wsVScroll, 28, 466, 690, 82, 0)
+	fillUsage([3]string{"每日用量    登录后显示", "每周用量    登录后显示", "每月用量    登录后显示"})
+
 	currentAdvertisement = defaultAdvertisementConfig()
 	if cached, err := loadAdvertisementCache(advertisementCachePath()); err == nil {
 		currentAdvertisement = cached
 	}
-	advertisementLabel = createControl(hwnd, "STATIC", currentAdvertisement.labelText(), wsChild|wsVisible|wsBorder|ssNotify|ssCenterImage, 28, 82, 576, 50, controlAdvertisement)
-	advertisementButton = createControl(hwnd, "BUTTON", currentAdvertisement.ButtonText, wsChild|wsVisible|wsTabStop, 614, 89, 104, 36, controlAdvertisement)
+	advertisementLabel = createControl(hwnd, "STATIC", currentAdvertisement.labelText(), wsChild|wsVisible|wsBorder|ssCenterImage, 28, 318, 538, 48, 0)
+	advertisementButton = createControl(hwnd, "BUTTON", consultationButtonText, wsChild|wsVisible|wsTabStop, 576, 324, 142, 36, controlAdvertisement)
 	baseLabel = createLabel(hwnd, "API 接口", 28, 152, 100, 24, font)
 	baseEdit = createControl(hwnd, "EDIT", defaultBaseURL, wsChild|wsVisible|wsTabStop|wsBorder|esAutoHScroll, 28, 178, 690, 32, 0)
 	keyLabel = createLabel(hwnd, "API Key（使用 Windows DPAPI 加密，仅保存在本机）", 28, 226, 420, 24, font)
 	keyEdit = createControl(hwnd, "EDIT", "", wsChild|wsVisible|wsTabStop|wsBorder|esAutoHScroll|esPassword, 28, 252, 690, 32, 0)
-	fetchButton = createControl(hwnd, "BUTTON", "获取模型", wsChild|wsVisible|wsTabStop, 28, 304, 132, 38, controlFetch)
+	fetchButton = createControl(hwnd, "BUTTON", "获取模型", wsChild|wsVisible|wsTabStop, 28, 304, 142, 38, controlFetch)
 	launchButton = createControl(hwnd, "BUTTON", "保存并启动 Codex", wsChild|wsVisible|wsTabStop, 174, 304, 192, 38, controlLaunch)
 	updateButton = createControl(hwnd, "BUTTON", "检查云桥更新", wsChild|wsVisible|wsTabStop, 380, 304, 176, 38, controlUpdate)
 	modelsLabel = createLabel(hwnd, "API 返回的模型", 28, 366, 180, 24, font)
@@ -376,7 +476,7 @@ func createControls(hwnd uintptr) {
 	footerLabel = createLabel(hwnd, fmt.Sprintf("云桥服务器更新源  ·  Bridge v%s", appVersion), 28, 758, 360, 20, font)
 	layoutControls(744, 771)
 
-	for _, handle := range []uintptr{advertisementLabel, advertisementButton, baseEdit, keyEdit, fetchButton, launchButton, updateButton, modelList, statusLabel} {
+	for _, handle := range []uintptr{modeAccountButton, modeExternalButton, accountEdit, passwordEdit, loginButton, logoutButton, memberInfoLabel, providerCombo, accountModelCombo, usageList, advertisementLabel, advertisementButton, baseEdit, keyEdit, fetchButton, launchButton, updateButton, modelList, statusLabel} {
 		procSendMessageW.Call(handle, wmSetFont, font, 1)
 	}
 	if currentConfig.BaseURL != "" {
@@ -391,6 +491,7 @@ func createControls(hwnd uintptr) {
 		setStatus(fmt.Sprintf("已载入上次保存的 %d 个模型。", len(currentModels)))
 	}
 	setAdvertisementVisibility(currentAdvertisement.Enabled)
+	setConnectionMode(true)
 	startAdvertisementRefresh()
 }
 
@@ -399,12 +500,13 @@ func layoutControls(width, height int) {
 		return
 	}
 	lastClientWidth, lastClientHeight = width, height
-	layout := calculateWindowLayoutWithAdvertisement(width, height, currentAdvertisement.Enabled)
+	layout := calculateWindowLayoutForMode(width, height, currentAdvertisement.Enabled, accountMode)
 	items := []struct {
 		handle uintptr
 		rect   controlRect
 	}{
 		{brandLabel, layout.Brand}, {subtitleLabel, layout.Subtitle},
+		{modeAccountButton, layout.ModeAccount}, {modeExternalButton, layout.ModeExternal},
 		{advertisementLabel, layout.Advertisement}, {advertisementButton, layout.AdvertisementButton},
 		{baseLabel, layout.BaseLabel}, {baseEdit, layout.BaseEdit},
 		{keyLabel, layout.KeyLabel}, {keyEdit, layout.KeyEdit},
@@ -413,9 +515,27 @@ func layoutControls(width, height int) {
 		{modelList, layout.ModelsList}, {statusTitle, layout.StatusTitle},
 		{statusLabel, layout.StatusEdit}, {progressLabel, layout.ProgressLabel},
 		{progressBar, layout.ProgressBar}, {footerLabel, layout.Footer},
+		{accountEdit, layout.AccountEdit}, {passwordEdit, layout.PasswordEdit},
+		{loginButton, layout.LoginButton}, {logoutButton, layout.LogoutButton},
+		{memberInfoLabel, layout.MemberInfo}, {providerLabel, layout.ProviderLabel},
+		{providerCombo, layout.ProviderCombo}, {accountModelLabel, layout.AccountModelLabel},
+		{accountModelCombo, layout.AccountModelCombo}, {usageTitle, layout.UsageTitle},
+		{usageList, layout.UsageList},
 	}
 	for _, item := range items {
-		procMoveWindow.Call(item.handle, uintptr(item.rect.X), uintptr(item.rect.Y), uintptr(item.rect.Width), uintptr(item.rect.Height), 1)
+		if item.handle == 0 || item.rect.Width <= 0 || item.rect.Height <= 0 {
+			continue
+		}
+		height := item.rect.Height
+		// A Win32 COMBOBOX uses its total window height for the opened list.
+		// The responsive row height is only the collapsed height; applying it
+		// directly made a populated model dropdown display one item at a time.
+		if item.handle == providerCombo {
+			height = 130
+		} else if item.handle == accountModelCombo {
+			height = 260
+		}
+		procMoveWindow.Call(item.handle, uintptr(item.rect.X), uintptr(item.rect.Y), uintptr(item.rect.Width), uintptr(height), 1)
 	}
 }
 
@@ -463,7 +583,8 @@ func applyPendingAdvertisement() {
 	advertisementMutex.Unlock()
 	currentAdvertisement = config
 	setText(advertisementLabel, config.labelText())
-	setText(advertisementButton, config.ButtonText)
+	// The consultation action is product UI, not remotely configurable ad copy.
+	setText(advertisementButton, consultationButtonText)
 	setAdvertisementVisibility(config.Enabled)
 }
 
@@ -497,6 +618,194 @@ func createControl(parent uintptr, class, text string, style uintptr, x, y, widt
 	return handle
 }
 
+func setConnectionMode(useAccount bool) {
+	accountMode = useAccount
+	procSendMessageW.Call(modeAccountButton, bmSetCheck, boolToUintptr(useAccount), 0)
+	procSendMessageW.Call(modeExternalButton, bmSetCheck, boolToUintptr(!useAccount), 0)
+	accountControls := []uintptr{accountEdit, passwordEdit, loginButton, logoutButton, memberInfoLabel, providerLabel, providerCombo, accountModelLabel, accountModelCombo, usageTitle, usageList}
+	externalControls := []uintptr{baseLabel, baseEdit, keyLabel, keyEdit, fetchButton, modelsLabel, modelList}
+	showControls(accountControls, useAccount)
+	showControls(externalControls, !useAccount)
+	if useAccount {
+		setStatus("登录后选择上游和模型。")
+	} else {
+		setStatus("填入 API 地址和 Key，点击“获取模型”。")
+	}
+	if lastClientWidth > 0 && lastClientHeight > 0 {
+		layoutControls(lastClientWidth, lastClientHeight)
+	}
+}
+
+func showControls(controls []uintptr, visible bool) {
+	command := uintptr(swHide)
+	if visible {
+		command = swShow
+	}
+	for _, handle := range controls {
+		procShowWindow.Call(handle, command)
+	}
+}
+
+func boolToUintptr(value bool) uintptr {
+	if value {
+		return 1
+	}
+	return 0
+}
+
+func startAccountLogin() {
+	user := strings.TrimSpace(loginFieldValue(accountEdit))
+	password := loginFieldValue(passwordEdit)
+	if user == "" || password == "" {
+		messageBox("请输入用户和密码。", 0x30)
+		return
+	}
+	setAccountBusy(true)
+	setStatus("正在登录云桥账号…")
+	go func() {
+		client := newAccountClient()
+		account, err := client.login(user, password)
+		if err != nil {
+			postUpdate(uiUpdate{Error: err, Done: true})
+			return
+		}
+		postUpdate(uiUpdate{Status: "登录成功，正在读取订阅、分组和 Key…"})
+		entitlements, err := client.entitlements(account)
+		if err != nil {
+			postUpdate(uiUpdate{Error: err, Done: true})
+			return
+		}
+		postUpdate(uiUpdate{Account: &entitlements, Status: "账号资料已加载。", Done: true})
+	}()
+}
+
+func setAccountBusy(busy bool) {
+	enabled := uintptr(1)
+	if busy {
+		enabled = 0
+	}
+	for _, handle := range []uintptr{accountEdit, passwordEdit, loginButton, logoutButton, modeAccountButton, modeExternalButton} {
+		procEnableWindow.Call(handle, enabled)
+	}
+}
+
+func applyAccountEntitlements(entitlements accountEntitlements) {
+	loggedIn = true
+	accountProviderKeys = entitlements.ProviderKeys
+	accountModels = make(map[string][]string)
+	setText(memberInfoLabel, membershipText(entitlements))
+	fillUsage(usageLines(entitlements.Progress))
+	providers := make([]string, 0, 3)
+	for _, provider := range []string{"ChatGPT", "Gemini", "Grok"} {
+		if entitlements.ProviderKeys[provider] != "" {
+			providers = append(providers, provider)
+		}
+	}
+	fillCombo(providerCombo, providers)
+	if len(providers) > 0 {
+		procSendMessageW.Call(providerCombo, cbSetCurSel, 0, 0)
+		loadSelectedProviderModels()
+	}
+}
+
+func logoutAccount() {
+	loggedIn = false
+	accountProviderKeys = make(map[string]string)
+	accountModels = make(map[string][]string)
+	setText(accountEdit, "")
+	setText(passwordEdit, "")
+	showLoginPlaceholder(accountEdit)
+	showLoginPlaceholder(passwordEdit)
+	setText(memberInfoLabel, "未登录")
+	fillCombo(providerCombo, nil)
+	fillCombo(accountModelCombo, nil)
+	fillUsage([3]string{"每日用量    登录后显示", "每周用量    登录后显示", "每月用量    登录后显示"})
+	setStatus("已退出云桥账号。")
+}
+
+func loginFieldValue(handle uintptr) string {
+	if handle == accountEdit && accountPlaceholderActive {
+		return ""
+	}
+	if handle == passwordEdit && passwordPlaceholderActive {
+		return ""
+	}
+	return getText(handle)
+}
+
+func showLoginPlaceholder(handle uintptr) {
+	if handle == accountEdit {
+		if getText(handle) == "" {
+			accountPlaceholderActive = true
+			setText(handle, accountPlaceholder)
+		}
+		return
+	}
+	if handle == passwordEdit && getText(handle) == "" {
+		passwordPlaceholderActive = true
+		procSendMessageW.Call(handle, emSetPasswordChar, 0, 0)
+		setText(handle, passwordPlaceholder)
+	}
+}
+
+func handleLoginPlaceholderFocus(handle uintptr, focused, blurred bool) {
+	if focused {
+		if handle == accountEdit && accountPlaceholderActive {
+			accountPlaceholderActive = false
+			setText(handle, "")
+		}
+		if handle == passwordEdit && passwordPlaceholderActive {
+			passwordPlaceholderActive = false
+			setText(handle, "")
+			procSendMessageW.Call(handle, emSetPasswordChar, uintptr('*'), 0)
+		}
+		return
+	}
+	if blurred {
+		showLoginPlaceholder(handle)
+	}
+}
+
+func fillCombo(handle uintptr, values []string) {
+	procSendMessageW.Call(handle, cbResetContent, 0, 0)
+	for _, value := range values {
+		procSendMessageW.Call(handle, cbAddString, 0, uintptr(unsafe.Pointer(utf16(value))))
+	}
+}
+
+func fillUsage(lines [3]string) {
+	procSendMessageW.Call(usageList, lbReset, 0, 0)
+	for _, line := range lines {
+		procSendMessageW.Call(usageList, lbAddString, 0, uintptr(unsafe.Pointer(utf16(line))))
+	}
+}
+
+func loadSelectedProviderModels() {
+	if !loggedIn {
+		return
+	}
+	provider := getText(providerCombo)
+	key := accountProviderKeys[provider]
+	if key == "" {
+		return
+	}
+	if cached := accountModels[provider]; len(cached) > 0 {
+		currentModels = append([]string(nil), cached...)
+		fillCombo(accountModelCombo, cached)
+		procSendMessageW.Call(accountModelCombo, cbSetCurSel, 0, 0)
+		return
+	}
+	setStatus("正在获取" + provider + "分组模型…")
+	go func(provider, key string) {
+		models, err := fetchModels(defaultBaseURL, key)
+		if err != nil {
+			postUpdate(uiUpdate{Error: err, Done: true})
+			return
+		}
+		postUpdate(uiUpdate{Models: models, Provider: provider, Status: fmt.Sprintf("%s 已获取 %d 个模型。", provider, len(models)), Done: true})
+	}(provider, key)
+}
+
 func startFetch() {
 	baseURL := getText(baseEdit)
 	apiKey := getText(keyEdit)
@@ -518,6 +827,20 @@ func startFetch() {
 func startSaveAndLaunch() {
 	baseURL := getText(baseEdit)
 	apiKey := getText(keyEdit)
+	if accountMode {
+		if !loggedIn {
+			messageBox("请先登录云桥账号。", 0x30)
+			return
+		}
+		provider := getText(providerCombo)
+		apiKey = accountProviderKeys[provider]
+		baseURL = defaultBaseURL
+		currentModels = append([]string(nil), accountModels[provider]...)
+		if apiKey == "" || len(currentModels) == 0 {
+			messageBox("请等待当前上游的模型加载完成。", 0x30)
+			return
+		}
+	}
 	setBusy(true, "正在保存配置…")
 	go func() {
 		models := append([]string(nil), currentModels...)
@@ -577,6 +900,7 @@ func startSaveAndLaunch() {
 			return
 		}
 		go syncProxyImagesToCodex(cdpPort, proxy)
+		go maintainCodexInjection(cdpPort, models, defaultModel, proxy.done, diagnosticLog)
 		menuErr := <-menuResult
 		if menuErr != nil {
 			diagnosticLog("menu.localization_failed", menuErr.Error())
@@ -602,7 +926,14 @@ func postUpdate(update uiUpdate) {
 		pendingUpdate.Status = update.Status
 	}
 	if update.Models != nil {
-		pendingUpdate.Models = update.Models
+		pendingUpdate.Models = append([]string(nil), update.Models...)
+	}
+	if update.Provider != "" {
+		pendingUpdate.Provider = update.Provider
+	}
+	if update.Account != nil {
+		copy := *update.Account
+		pendingUpdate.Account = &copy
 	}
 	if update.Error != nil {
 		pendingUpdate.Error = update.Error
@@ -636,9 +967,20 @@ func applyPendingUpdate() {
 	if update.Status != "" {
 		setStatus(update.Status)
 	}
+	if update.Account != nil {
+		applyAccountEntitlements(*update.Account)
+	}
 	if update.Models != nil {
 		currentModels = append([]string(nil), update.Models...)
-		fillModels(currentModels)
+		if update.Provider != "" {
+			accountModels[update.Provider] = append([]string(nil), update.Models...)
+			if getText(providerCombo) == update.Provider {
+				fillCombo(accountModelCombo, update.Models)
+				procSendMessageW.Call(accountModelCombo, cbSetCurSel, 0, 0)
+			}
+		} else {
+			fillModels(currentModels)
+		}
 	}
 	if update.Error != nil {
 		diagnosticLog("operation.failed", update.Error.Error())
@@ -648,6 +990,7 @@ func applyPendingUpdate() {
 	}
 	if update.Done {
 		setBusy(false, "")
+		setAccountBusy(false)
 	}
 }
 
