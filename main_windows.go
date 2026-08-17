@@ -89,6 +89,7 @@ const (
 	controlAccountModel  = 110
 	controlAccountEdit   = 111
 	controlPasswordEdit  = 112
+	controlNativeLaunch  = 113
 )
 
 var (
@@ -214,6 +215,7 @@ var (
 	statusLabel               uintptr
 	fetchButton               uintptr
 	launchButton              uintptr
+	nativeLaunchButton        uintptr
 	updateButton              uintptr
 	advertisementLabel        uintptr
 	advertisementButton       uintptr
@@ -358,6 +360,8 @@ func windowProc(hwnd uintptr, msg uint32, wParam, lParam uintptr) uintptr {
 			startFetch()
 		case controlLaunch:
 			startSaveAndLaunch()
+		case controlNativeLaunch:
+			startNativeLaunch()
 		case controlUpdate:
 			startBridgeUpdate()
 		case controlAdvertisement:
@@ -465,7 +469,8 @@ func createControls(hwnd uintptr) {
 	keyEdit = createControl(hwnd, "EDIT", "", wsChild|wsVisible|wsTabStop|wsBorder|esAutoHScroll|esPassword, 28, 252, 690, 32, 0)
 	fetchButton = createControl(hwnd, "BUTTON", "获取模型", wsChild|wsVisible|wsTabStop, 28, 304, 142, 38, controlFetch)
 	launchButton = createControl(hwnd, "BUTTON", "保存并启动 Codex", wsChild|wsVisible|wsTabStop, 174, 304, 192, 38, controlLaunch)
-	updateButton = createControl(hwnd, "BUTTON", "检查云桥更新", wsChild|wsVisible|wsTabStop, 380, 304, 176, 38, controlUpdate)
+	nativeLaunchButton = createControl(hwnd, "BUTTON", "原生账号启动", wsChild|wsVisible|wsTabStop, 380, 304, 176, 38, controlNativeLaunch)
+	updateButton = createControl(hwnd, "BUTTON", "检查云桥更新", wsChild|wsVisible|wsTabStop, 570, 304, 148, 38, controlUpdate)
 	modelsLabel = createLabel(hwnd, "API 返回的模型", 28, 366, 180, 24, font)
 	modelList = createControl(hwnd, "LISTBOX", "", wsChild|wsVisible|wsBorder|wsVScroll|lbsNotify, 28, 392, 690, 220, 0)
 	statusTitle = createLabel(hwnd, "运行状态", 28, 636, 100, 22, font)
@@ -476,7 +481,7 @@ func createControls(hwnd uintptr) {
 	footerLabel = createLabel(hwnd, fmt.Sprintf("云桥服务器更新源  ·  Bridge v%s", appVersion), 28, 758, 360, 20, font)
 	layoutControls(744, 771)
 
-	for _, handle := range []uintptr{modeAccountButton, modeExternalButton, accountEdit, passwordEdit, loginButton, logoutButton, memberInfoLabel, providerCombo, accountModelCombo, usageList, advertisementLabel, advertisementButton, baseEdit, keyEdit, fetchButton, launchButton, updateButton, modelList, statusLabel} {
+	for _, handle := range []uintptr{modeAccountButton, modeExternalButton, accountEdit, passwordEdit, loginButton, logoutButton, memberInfoLabel, providerCombo, accountModelCombo, usageList, advertisementLabel, advertisementButton, baseEdit, keyEdit, fetchButton, launchButton, nativeLaunchButton, updateButton, modelList, statusLabel} {
 		procSendMessageW.Call(handle, wmSetFont, font, 1)
 	}
 	if currentConfig.BaseURL != "" {
@@ -511,6 +516,7 @@ func layoutControls(width, height int) {
 		{baseLabel, layout.BaseLabel}, {baseEdit, layout.BaseEdit},
 		{keyLabel, layout.KeyLabel}, {keyEdit, layout.KeyEdit},
 		{fetchButton, layout.FetchButton}, {launchButton, layout.LaunchButton},
+		{nativeLaunchButton, layout.NativeLaunchButton},
 		{updateButton, layout.UpdateButton}, {modelsLabel, layout.ModelsLabel},
 		{modelList, layout.ModelsList}, {statusTitle, layout.StatusTitle},
 		{statusLabel, layout.StatusEdit}, {progressLabel, layout.ProgressLabel},
@@ -920,6 +926,32 @@ func startSaveAndLaunch() {
 	}()
 }
 
+func startNativeLaunch() {
+	setBusy(true, "正在恢复官方 Codex 登录配置…")
+	go func() {
+		stopActiveProxy()
+		if err := restoreNativeCodexConfig(); err != nil {
+			postUpdate(uiUpdate{Error: err, Done: true})
+			return
+		}
+		postUpdate(uiUpdate{Status: "正在启动官方 Codex…"})
+		install, err := findCodexInstallation()
+		if err != nil {
+			postUpdate(uiUpdate{Error: err, Done: true})
+			return
+		}
+		if err := launchCodexNative(install); err != nil {
+			postUpdate(uiUpdate{Error: err, Done: true})
+			return
+		}
+		diagnosticLog("launch.native_ready", "provider=official")
+		postUpdate(uiUpdate{
+			Status: "已使用官方配置启动 Codex；如未登录，请在官方页面选择 ChatGPT 账号登录。",
+			Done:   true,
+		})
+	}()
+}
+
 func postUpdate(update uiUpdate) {
 	updateMutex.Lock()
 	if update.Status != "" {
@@ -1001,6 +1033,7 @@ func setBusy(busy bool, status string) {
 	}
 	procEnableWindow.Call(fetchButton, enabled)
 	procEnableWindow.Call(launchButton, enabled)
+	procEnableWindow.Call(nativeLaunchButton, enabled)
 	procEnableWindow.Call(updateButton, enabled)
 	if status != "" {
 		setStatus(status)
@@ -1147,18 +1180,57 @@ func writeCodexProviderConfig(baseURL, model string) error {
 	}
 	existing, _ := os.ReadFile(configPath)
 	if len(existing) > 0 {
-		backupDir := filepath.Join(applicationDirectory(), "backups")
-		if err := os.MkdirAll(backupDir, 0700); err != nil {
+		if err := backupCodexConfig(existing); err != nil {
 			return err
-		}
-		backup := filepath.Join(backupDir, "config-"+time.Now().Format("20060102-150405")+".toml")
-		if err := os.WriteFile(backup, existing, 0600); err != nil {
-			return fmt.Errorf("备份 config.toml 失败：%w", err)
 		}
 	}
 	updated := updateCodexConfig(string(existing), baseURL, model)
 	if err := os.WriteFile(configPath, []byte(updated), 0600); err != nil {
 		return fmt.Errorf("写入 %s 失败：%w", configPath, err)
+	}
+	return nil
+}
+
+func backupCodexConfig(existing []byte) error {
+	backupDir := filepath.Join(applicationDirectory(), "backups")
+	if err := os.MkdirAll(backupDir, 0700); err != nil {
+		return err
+	}
+	backup := filepath.Join(backupDir, "config-"+time.Now().Format("20060102-150405.000")+".toml")
+	if err := os.WriteFile(backup, existing, 0600); err != nil {
+		return fmt.Errorf("备份 config.toml 失败：%w", err)
+	}
+	return nil
+}
+
+func restoreNativeCodexConfig() error {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	configPath := filepath.Join(home, ".codex", "config.toml")
+	existing, err := os.ReadFile(configPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("读取 Codex 配置失败：%w", err)
+	}
+	restored := removeYunqiaoCodexConfig(string(existing))
+	if strings.TrimSpace(restored) == strings.TrimSpace(string(existing)) {
+		return nil
+	}
+	if err := backupCodexConfig(existing); err != nil {
+		return err
+	}
+	if strings.TrimSpace(restored) == "" {
+		if err := os.Remove(configPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("恢复官方 Codex 配置失败：%w", err)
+		}
+		return nil
+	}
+	if err := os.WriteFile(configPath, []byte(restored), 0600); err != nil {
+		return fmt.Errorf("恢复官方 Codex 配置失败：%w", err)
 	}
 	return nil
 }
@@ -1257,6 +1329,44 @@ func launchCodex(install codexInstallation) error {
 	)
 	command.Dir = workingDirectory
 	command.Env = append(os.Environ(), "LANG=zh_CN.UTF-8")
+	if err := command.Start(); err != nil {
+		return fmt.Errorf("启动官方 Codex 失败：%w", err)
+	}
+	return nil
+}
+
+func launchCodexNative(install codexInstallation) error {
+	workingDirectory, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("无法确定 Windows 用户目录：%w", err)
+	}
+	if strings.TrimSpace(workingDirectory) == "" {
+		return errors.New("Windows 用户目录为空")
+	}
+	info, err := os.Stat(workingDirectory)
+	if err != nil || !info.IsDir() {
+		return fmt.Errorf("Windows 用户目录不可用：%s", workingDirectory)
+	}
+
+	processName := filepath.Base(install.Executable)
+	if processName == "" {
+		processName = "Codex.exe"
+	}
+	kill := exec.Command("taskkill.exe", "/F", "/T", "/IM", processName)
+	kill.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	_ = kill.Run()
+	time.Sleep(800 * time.Millisecond)
+
+	if install.AUMID != "" {
+		if _, err := activateApplication(install.AUMID, ""); err == nil {
+			return nil
+		}
+	}
+	if install.Executable == "" {
+		return errors.New("已找到 Codex 应用包，但无法启动")
+	}
+	command := exec.Command(install.Executable)
+	command.Dir = workingDirectory
 	if err := command.Start(); err != nil {
 		return fmt.Errorf("启动官方 Codex 失败：%w", err)
 	}

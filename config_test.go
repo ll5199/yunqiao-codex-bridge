@@ -83,6 +83,32 @@ func TestUpdateCodexConfigIsIdempotent(t *testing.T) {
 	}
 }
 
+func TestRemoveYunqiaoCodexConfigPreservesOtherSettings(t *testing.T) {
+	existing := updateCodexConfig("[features]\nweb_search = true\n", defaultBaseURL, "gpt-5.6-sol")
+	restored := removeYunqiaoCodexConfig(existing)
+	if strings.Contains(restored, "YUNQIAO CODEX BRIDGE") || strings.Contains(restored, providerID) {
+		t.Fatalf("bridge config remains:\n%s", restored)
+	}
+	for _, expected := range []string{"[features]", "web_search = true"} {
+		if !strings.Contains(restored, expected) {
+			t.Fatalf("missing %q in:\n%s", expected, restored)
+		}
+	}
+}
+
+func TestRemoveLegacyYunqiaoCodexConfig(t *testing.T) {
+	existing := "model = \"gpt-5.6-sol\"\nmodel_provider = \"yunqiao_bridge\"\n\n" +
+		"[model_providers.yunqiao_bridge]\nbase_url = \"http://127.0.0.1:1234/v1\"\n\n" +
+		"[features]\nweb_search = true\n"
+	restored := removeYunqiaoCodexConfig(existing)
+	if strings.Contains(restored, "gpt-5.6-sol") || strings.Contains(restored, providerID) {
+		t.Fatalf("legacy bridge config remains:\n%s", restored)
+	}
+	if !strings.Contains(restored, "web_search = true") {
+		t.Fatalf("unrelated setting was removed:\n%s", restored)
+	}
+}
+
 func TestCompareVersions(t *testing.T) {
 	for _, test := range []struct {
 		left, right string

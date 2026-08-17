@@ -5,17 +5,17 @@ type controlRect struct {
 }
 
 type windowLayout struct {
-	Brand, Subtitle, ModeAccount, ModeExternal           controlRect
-	Advertisement, AdvertisementButton                   controlRect
-	BaseLabel, BaseEdit, KeyLabel, KeyEdit               controlRect
-	FetchButton, LaunchButton, UpdateButton              controlRect
-	ModelsLabel, ModelsList                              controlRect
-	AccountEdit, PasswordEdit, LoginButton, LogoutButton controlRect
-	MemberInfo, ProviderLabel, ProviderCombo             controlRect
-	AccountModelLabel, AccountModelCombo                 controlRect
-	UsageTitle, UsageList                                controlRect
-	StatusTitle, StatusEdit, ProgressLabel, ProgressBar  controlRect
-	Footer                                               controlRect
+	Brand, Subtitle, ModeAccount, ModeExternal                  controlRect
+	Advertisement, AdvertisementButton                          controlRect
+	BaseLabel, BaseEdit, KeyLabel, KeyEdit                      controlRect
+	FetchButton, LaunchButton, NativeLaunchButton, UpdateButton controlRect
+	ModelsLabel, ModelsList                                     controlRect
+	AccountEdit, PasswordEdit, LoginButton, LogoutButton        controlRect
+	MemberInfo, ProviderLabel, ProviderCombo                    controlRect
+	AccountModelLabel, AccountModelCombo                        controlRect
+	UsageTitle, UsageList                                       controlRect
+	StatusTitle, StatusEdit, ProgressLabel, ProgressBar         controlRect
+	Footer                                                      controlRect
 }
 
 func calculateWindowLayout(width, height int) windowLayout {
@@ -36,8 +36,11 @@ func calculateWindowLayoutForMode(width, height int, advertisementEnabled, accou
 	margin := 24
 	contentWidth := width - margin*2
 	gap := 12
-	buttonWidth := 170
-	buttonRowWidth := buttonWidth*2 + gap
+	buttonWidth := (contentWidth - gap*2) / 3
+	if buttonWidth > 170 {
+		buttonWidth = 170
+	}
+	buttonRowWidth := buttonWidth*3 + gap*2
 	buttonX := margin + (contentWidth-buttonRowWidth)/2
 
 	statusTitleY := height - 144
@@ -85,7 +88,8 @@ func calculateWindowLayoutForMode(width, height int, advertisementEnabled, accou
 		layout.Advertisement = controlRect{margin, adY, contentWidth - adButtonWidth - adGap, 48}
 		layout.AdvertisementButton = controlRect{width - margin - adButtonWidth, adY + 6, adButtonWidth, 36}
 		layout.LaunchButton = controlRect{buttonX, 382, buttonWidth, 38}
-		layout.UpdateButton = controlRect{buttonX + buttonWidth + gap, 382, buttonWidth, 38}
+		layout.NativeLaunchButton = controlRect{buttonX + buttonWidth + gap, 382, buttonWidth, 38}
+		layout.UpdateButton = controlRect{buttonX + (buttonWidth+gap)*2, 382, buttonWidth, 38}
 		layout.UsageTitle = controlRect{margin, 440, contentWidth, 22}
 		// A single list owns all three rows. Windows can resize this control
 		// without independently wrapping or repositioning row text.
@@ -103,7 +107,8 @@ func calculateWindowLayoutForMode(width, height int, advertisementEnabled, accou
 		layout.Advertisement = controlRect{margin, adY, contentWidth - adButtonWidth - adGap, 48}
 		layout.AdvertisementButton = controlRect{width - margin - adButtonWidth, adY + 6, adButtonWidth, 36}
 		layout.LaunchButton = controlRect{buttonX, 482, buttonWidth, 38}
-		layout.UpdateButton = controlRect{buttonX + buttonWidth + gap, 482, buttonWidth, 38}
+		layout.NativeLaunchButton = controlRect{buttonX + buttonWidth + gap, 482, buttonWidth, 38}
+		layout.UpdateButton = controlRect{buttonX + (buttonWidth+gap)*2, 482, buttonWidth, 38}
 	}
 	if !advertisementEnabled {
 		layout.Advertisement = controlRect{}

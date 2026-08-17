@@ -34,7 +34,7 @@ type cdpTarget struct {
 	WebSocketDebuggerURL string `json:"webSocketDebuggerUrl"`
 }
 
-const rendererBridgeVersion = "1.4.1"
+const rendererBridgeVersion = "1.4.2"
 
 func rendererExpression(models []string, defaultModel string) string {
 	modelJSON, _ := json.Marshal(models)

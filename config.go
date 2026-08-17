@@ -17,7 +17,7 @@ import (
 const (
 	defaultBaseURL = "https://api.velyn65.com/v1"
 	providerID     = "yunqiao_bridge"
-	appVersion     = "1.4.1"
+	appVersion     = "1.4.2"
 )
 
 type appConfig struct {
@@ -262,4 +262,72 @@ func updateCodexConfig(existing, baseURL, model string) string {
 	}
 	parts = append(parts, strings.Join(provider, "\n"))
 	return strings.Join(parts, "\n\n") + "\n"
+}
+
+func removeYunqiaoCodexConfig(existing string) string {
+	const beginMarker = "# BEGIN YUNQIAO CODEX BRIDGE"
+	const endMarker = "# END YUNQIAO CODEX BRIDGE"
+
+	normalized := strings.ReplaceAll(existing, "\r\n", "\n")
+	lines := strings.Split(normalized, "\n")
+	legacyProvider := false
+	inTopLevel := true
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]") {
+			inTopLevel = false
+			continue
+		}
+		if !inTopLevel {
+			continue
+		}
+		key, value, ok := strings.Cut(trimmed, "=")
+		if ok && strings.TrimSpace(key) == "model_provider" &&
+			strings.Trim(strings.TrimSpace(value), "\"'") == providerID {
+			legacyProvider = true
+		}
+	}
+
+	clean := make([]string, 0, len(lines))
+	inMarker := false
+	inProvider := false
+	inTopLevel = true
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == beginMarker {
+			inMarker = true
+			continue
+		}
+		if inMarker {
+			if trimmed == endMarker {
+				inMarker = false
+			}
+			continue
+		}
+		if strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]") {
+			inTopLevel = false
+			inProvider = trimmed == "[model_providers."+providerID+"]" ||
+				strings.HasPrefix(trimmed, "[model_providers."+providerID+".")
+			if inProvider {
+				continue
+			}
+		} else if inProvider {
+			continue
+		}
+		if legacyProvider && inTopLevel {
+			if key, _, ok := strings.Cut(trimmed, "="); ok {
+				key = strings.TrimSpace(key)
+				if key == "model" || key == "model_provider" {
+					continue
+				}
+			}
+		}
+		clean = append(clean, line)
+	}
+
+	body := strings.TrimSpace(strings.Join(clean, "\n"))
+	if body == "" {
+		return ""
+	}
+	return body + "\n"
 }

@@ -5,11 +5,11 @@
   window.__yunqiaoCodexModels = Array.from(new Set(incoming));
   window.__yunqiaoCodexDefaultModel = String(window.__YUNQIAO_INJECT_DEFAULT__ || window.__yunqiaoCodexModels[0] || "");
 
-  if (window.__yunqiaoCodexBridgeInstalled === "1.4.1") {
+  if (window.__yunqiaoCodexBridgeInstalled === "1.4.2") {
     window.__yunqiaoCodexBridgeRefresh?.();
     return;
   }
-  window.__yunqiaoCodexBridgeInstalled = "1.4.1";
+  window.__yunqiaoCodexBridgeInstalled = "1.4.2";
 
   function installChineseLocale() {
     const locale = "zh-CN";

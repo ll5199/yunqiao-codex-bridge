@@ -50,7 +50,7 @@ func TestVisibleLayoutsDoNotOverlapOrLeaveClient(t *testing.T) {
 				{"brand", layout.Brand}, {"subtitle", layout.Subtitle},
 				{"mode account", layout.ModeAccount}, {"mode external", layout.ModeExternal},
 				{"advertisement", layout.Advertisement}, {"consult button", layout.AdvertisementButton},
-				{"launch", layout.LaunchButton}, {"update", layout.UpdateButton},
+				{"launch", layout.LaunchButton}, {"native launch", layout.NativeLaunchButton}, {"update", layout.UpdateButton},
 				{"status title", layout.StatusTitle}, {"status", layout.StatusEdit},
 				{"progress label", layout.ProgressLabel}, {"progress", layout.ProgressBar}, {"footer", layout.Footer},
 			}
