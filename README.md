@@ -64,8 +64,9 @@ Bridge EXE 所在目录（例如桌面的 `yunqiao` 文件夹）创建或选为�
 - 对 Responses SSE 中 Codex 不支持的 `image_generation_call` 输出进行兼容转换：
   图片数据由 Bridge 捕获显示，Codex 收到标准助手消息和完整结束事件，避免生图成功后
   出现 `Error submitting message`。
-- Gemini、Grok 文本模型会把 Codex 的 `/responses` 请求自动转换为
-  `/chat/completions`；Gemini 图片模型使用原生 `v1beta ...:generateContent`；
+- Grok 文本/推理模型原样透传 Codex 的 `/responses` 请求，保留 `custom`、
+  `namespace` 和 `tool_search` 等工具定义；Gemini 文本模型仍自动转换为
+  `/chat/completions`，Gemini 图片模型使用原生 `v1beta ...:generateContent`；
   `grok-imagine-image` 使用 `/images/generations`，`grok-imagine-video` 使用
   `/videos/generations`。GPT/OpenAI 模型仍直接使用 `/responses`。
 - 同一 Bridge 内的 Gemini 请求会自动排队；遇到短暂的并发槽 429 会等待 3 秒重试
