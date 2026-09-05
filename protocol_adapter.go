@@ -66,6 +66,15 @@ func adaptResponsesRequest(request *http.Request, path string, logger func(strin
 			}},
 			"generationConfig": map[string]any{"responseModalities": []string{"TEXT", "IMAGE"}},
 		}
+	case strings.Contains(lowerModel, "grok"):
+		// Sub2API's native Responses adapter preserves Codex-specific custom,
+		// namespace and tool_search tools for Grok. Converting these requests to
+		// Chat Completions here drops those tool definitions and leaves Grok able
+		// to describe an action, but unable to actually invoke it.
+		if logger != nil {
+			logger("protocol.native", fmt.Sprintf("model=%s responses=%s protocol=responses", safeLogID(model), path))
+		}
+		return path, ""
 	default:
 		adapted = responsesToChatRequest(input)
 	}

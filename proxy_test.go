@@ -247,6 +247,59 @@ func TestAdaptGeminiResponsesToChatCompletions(t *testing.T) {
 	}
 }
 
+func TestGrokResponsesPreservesCodexTools(t *testing.T) {
+	body := `{"model":"grok-4.6","input":"inspect the workspace","stream":true,"tools":[{"type":"custom","name":"apply_patch","description":"Edit files"},{"type":"namespace","name":"image_gen"},{"type":"tool_search"}]}`
+	request := httptest.NewRequest(http.MethodPost, "http://localhost/v1/responses", strings.NewReader(body))
+	path, protocol := adaptResponsesRequest(request, request.URL.Path, nil)
+	if path != "/v1/responses" || protocol != "" {
+		t.Fatalf("Grok agent request must use native Responses, got: %s %s", path, protocol)
+	}
+	forwarded, _ := io.ReadAll(request.Body)
+	if string(forwarded) != body {
+		t.Fatalf("Grok Responses body changed:\nwant %s\ngot  %s", body, forwarded)
+	}
+}
+
+func TestAPIProxyPassesGrokResponsesToolsAndEventsThrough(t *testing.T) {
+	type capturedRequest struct {
+		path string
+		body string
+	}
+	seen := make(chan capturedRequest, 1)
+	upstream := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		body, _ := io.ReadAll(request.Body)
+		seen <- capturedRequest{path: request.URL.Path, body: string(body)}
+		writer.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(writer, "event: response.output_item.done\n"+
+			`data: {"type":"response.output_item.done","output_index":0,"item":{"type":"custom_tool_call","call_id":"call_test","name":"apply_patch","input":"*** Begin Patch"}}`+"\n\n"+
+			"data: [DONE]\n\n")
+	}))
+	defer upstream.Close()
+
+	proxy, err := startAPIProxy(upstream.URL+"/v1", "test-secret", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer proxy.close()
+
+	body := `{"model":"grok-4.6","input":"edit a file","stream":true,"tools":[{"type":"custom","name":"apply_patch","description":"Edit files"},{"type":"namespace","name":"image_gen"},{"type":"tool_search"}]}`
+	response, err := http.Post(codexProxyBase+"/responses", "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	responseBody, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+
+	forwarded := <-seen
+	if forwarded.path != "/v1/responses" || forwarded.body != body {
+		t.Fatalf("unexpected Grok upstream request: path=%s body=%s", forwarded.path, forwarded.body)
+	}
+	if !bytes.Contains(responseBody, []byte(`"type":"custom_tool_call"`)) ||
+		!bytes.Contains(responseBody, []byte(`"call_id":"call_test"`)) {
+		t.Fatalf("Grok tool event was not preserved: %s", responseBody)
+	}
+}
+
 func TestAdaptGrokImageToGenerations(t *testing.T) {
 	request := httptest.NewRequest(http.MethodPost, "http://localhost/v1/responses",
 		strings.NewReader(`{"model":"grok-imagine-1.0","input":"draw a dog"}`))
