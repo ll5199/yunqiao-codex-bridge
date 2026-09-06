@@ -17,7 +17,7 @@ import (
 const (
 	defaultBaseURL = "https://api.velyn65.com/v1"
 	providerID     = "yunqiao_bridge"
-	appVersion     = "1.4.4"
+	appVersion     = "1.4.5"
 )
 
 type appConfig struct {
