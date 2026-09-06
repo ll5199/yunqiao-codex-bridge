@@ -12,6 +12,8 @@ Windows 客户端。
 5. 将官方 Codex 界面语言设置为简体中文。
 6. 捕获并显示中转接口返回的生成图片，支持下载原图和按对话恢复。
 7. 自动兼容 Gemini、Grok 常见的 Chat Completions / Images 接口。
+8. 提供“智能路由（Auto）”，按任务内容自动选择 Grok、Terra、Luna 或 Sol；Astra
+   始终只允许手动选择。
 
 ## 使用
 
@@ -47,7 +49,13 @@ Bridge EXE 所在目录（例如桌面的 `yunqiao` 文件夹）创建或选为�
 - Bridge 给上游请求加入 API Key，并透明转发到用户填写的中转地址。
 - 使用本机 Chromium DevTools Protocol 启动官方 Codex。
 - 在官方客户端页面内补全 `model/list`、app-server、Statsig 和 React 模型状态。
-- 模型名称全部来自中转站 `/models` 返回值，不在程序里写死。
+- 实际模型名称来自中转站 `/models` 返回值；当 Grok 4.6、Terra、Luna 和 Sol 全部
+  可用时，Bridge 额外加入本地虚拟模型 `yunqiao-auto`，并将其显示为“智能路由（Auto）”。
+- Auto 默认把日常问答、写作和普通代码任务交给 Grok 4.6；批量提取、分类、表格和
+  结构化转换交给 Luna；整个文件夹、多文档综合和超长上下文交给 Terra；合同、合规、
+  审计等高风险文档交给 Sol。Astra 不参与自动分流，只保留手动选择。
+- 同一 Codex 会话使用 `prompt_cache_key` 记住已选模型，工具调用的后续请求不会在
+  任务中途切换模型。路由日志只记录模型、原因、字符数和附件数，不记录文档正文。
 - 启动参数和官方 `localeOverride` 都设置为 `zh-CN`；最长持续重试
   60 秒并监听延迟加载的多语言开关，因此英文版新装 Windows 也不会回退英文。
   顶部 File/Edit/View/Help 等 Electron 原生菜单通过本地主进程调试接口汉化。
