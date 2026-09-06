@@ -76,13 +76,28 @@ func startBridgeUpdate() {
 }
 
 func fetchBridgeUpdateManifest() (bridgeUpdateManifest, error) {
+	var lastErr error
+	for attempt := 1; attempt <= 3; attempt++ {
+		if attempt > 1 {
+			time.Sleep(time.Duration(attempt-1) * time.Second)
+		}
+		manifest, err := fetchBridgeUpdateManifestOnce()
+		if err == nil {
+			return manifest, nil
+		}
+		lastErr = err
+	}
+	return bridgeUpdateManifest{}, fmt.Errorf("连续 3 次连接更新服务失败：%w", lastErr)
+}
+
+func fetchBridgeUpdateManifestOnce() (bridgeUpdateManifest, error) {
 	request, err := http.NewRequest(http.MethodGet, bridgeManifestURL, nil)
 	if err != nil {
 		return bridgeUpdateManifest{}, err
 	}
 	request.Header.Set("Accept", "application/json")
 	request.Header.Set("User-Agent", "YunqiaoCodexBridge/"+appVersion)
-	client := &http.Client{Timeout: 20 * time.Second}
+	client := &http.Client{Timeout: 45 * time.Second}
 	response, err := client.Do(request)
 	if err != nil {
 		return bridgeUpdateManifest{}, fmt.Errorf("连接云桥更新服务失败：%w", err)
@@ -115,6 +130,29 @@ func downloadBridgeUpdate(manifest bridgeUpdateManifest, progress func(int)) (st
 }
 
 func downloadReleaseAsset(rawURL, destination string, limit int64, allowedHosts []string, progress func(int)) error {
+	partialPath := destination + ".part"
+	var lastErr error
+	for attempt := 1; attempt <= 3; attempt++ {
+		if attempt > 1 {
+			time.Sleep(time.Duration(attempt-1) * time.Second)
+		}
+		if err := downloadReleaseAssetOnce(rawURL, partialPath, limit, allowedHosts, progress); err != nil {
+			lastErr = err
+			continue
+		}
+		if err := os.Remove(destination); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		if err := os.Rename(partialPath, destination); err != nil {
+			return err
+		}
+		return nil
+	}
+	_ = os.Remove(partialPath)
+	return fmt.Errorf("连续 3 次下载失败：%w", lastErr)
+}
+
+func downloadReleaseAssetOnce(rawURL, destination string, limit int64, allowedHosts []string, progress func(int)) error {
 	response, err := openReleaseAsset(rawURL, allowedHosts)
 	if err != nil {
 		return err
@@ -129,6 +167,12 @@ func downloadReleaseAsset(rawURL, destination string, limit int64, allowedHosts 
 	written, err := io.Copy(file, reader)
 	if err != nil {
 		return err
+	}
+	if response.ContentLength >= 0 && written != response.ContentLength {
+		return fmt.Errorf("下载内容不完整：应为 %d 字节，实际 %d 字节", response.ContentLength, written)
+	}
+	if written == 0 {
+		return errors.New("下载文件为空")
 	}
 	if written > limit {
 		return errors.New("下载文件超过大小限制")
@@ -188,7 +232,15 @@ func openReleaseAsset(rawURL string, allowedHosts []string) (*http.Response, err
 		return nil, err
 	}
 	request.Header.Set("User-Agent", "YunqiaoCodexBridge/"+appVersion)
-	client := &http.Client{Timeout: 90 * time.Second}
+	client := &http.Client{
+		Timeout: 5 * time.Minute,
+		CheckRedirect: func(next *http.Request, via []*http.Request) error {
+			if len(via) >= 5 || next.URL.Scheme != "https" || !hostAllowed(next.URL.Hostname(), allowedHosts) {
+				return errors.New("Release 下载重定向不安全")
+			}
+			return nil
+		},
+	}
 	response, err := client.Do(request)
 	if err != nil {
 		return nil, err
