@@ -14,6 +14,10 @@ import (
 const compatibilityBodyLimit = 64 << 20
 
 func adaptResponsesRequest(request *http.Request, path string, logger func(string, string)) (string, string) {
+	return adaptResponsesRequestWithMemory(request, path, logger, nil)
+}
+
+func adaptResponsesRequestWithMemory(request *http.Request, path string, logger func(string, string), memory *smartRouteMemory) (string, string) {
 	if request.Method != http.MethodPost || !strings.HasSuffix(strings.ToLower(path), "/responses") || request.Body == nil {
 		return path, ""
 	}
@@ -28,6 +32,21 @@ func adaptResponsesRequest(request *http.Request, path string, logger func(strin
 		return path, ""
 	}
 	model := strings.TrimSpace(stringValue(input["model"]))
+	if model == smartRouterModel {
+		decision := chooseSmartRoute(input)
+		decision = memory.resolve(stringValue(input["prompt_cache_key"]), decision)
+		input["model"] = decision.Model
+		encoded, marshalErr := json.Marshal(input)
+		if marshalErr != nil {
+			return path, ""
+		}
+		replaceRequestBody(request, encoded)
+		model = decision.Model
+		if logger != nil {
+			logger("router.selected", fmt.Sprintf("model=%s reason=%s text_chars=%d files=%d",
+				safeLogID(model), decision.Reason, decision.TextChars, decision.FileCount))
+		}
+	}
 	lowerModel := strings.ToLower(model)
 	if !strings.Contains(lowerModel, "gemini") && !strings.Contains(lowerModel, "grok") {
 		return path, ""
@@ -82,17 +101,21 @@ func adaptResponsesRequest(request *http.Request, path string, logger func(strin
 	if err != nil {
 		return path, ""
 	}
-	request.Body = io.NopCloser(bytes.NewReader(encoded))
-	request.GetBody = func() (io.ReadCloser, error) {
-		return io.NopCloser(bytes.NewReader(encoded)), nil
-	}
-	request.ContentLength = int64(len(encoded))
-	request.Header.Set("Content-Type", "application/json")
-	request.Header.Del("Content-Length")
+	replaceRequestBody(request, encoded)
 	if logger != nil {
 		logger("protocol.adapted", fmt.Sprintf("model=%s responses=%s protocol=%s", safeLogID(model), adaptedPath, protocol))
 	}
 	return adaptedPath, protocol
+}
+
+func replaceRequestBody(request *http.Request, body []byte) {
+	request.Body = io.NopCloser(bytes.NewReader(body))
+	request.GetBody = func() (io.ReadCloser, error) {
+		return io.NopCloser(bytes.NewReader(body)), nil
+	}
+	request.ContentLength = int64(len(body))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Del("Content-Length")
 }
 
 func responsesToChatRequest(input map[string]any) map[string]any {

@@ -260,6 +260,24 @@ func TestGrokResponsesPreservesCodexTools(t *testing.T) {
 	}
 }
 
+func TestSmartRouterRewritesVirtualModelAndPreservesResponsesTools(t *testing.T) {
+	body := `{"model":"yunqiao-auto","input":"inspect the workspace","stream":true,"tools":[{"type":"custom","name":"apply_patch"},{"type":"namespace","name":"image_gen"},{"type":"tool_search"}]}`
+	request := httptest.NewRequest(http.MethodPost, "http://localhost/v1/responses", strings.NewReader(body))
+	path, protocol := adaptResponsesRequest(request, request.URL.Path, nil)
+	if path != "/v1/responses" || protocol != "" {
+		t.Fatalf("Auto Grok request must use native Responses, got: %s %s", path, protocol)
+	}
+	forwarded, _ := io.ReadAll(request.Body)
+	if bytes.Contains(forwarded, []byte(smartRouterModel)) || !bytes.Contains(forwarded, []byte(`"model":"grok-4.6"`)) {
+		t.Fatalf("virtual model was not rewritten: %s", forwarded)
+	}
+	for _, toolType := range []string{`"type":"custom"`, `"type":"namespace"`, `"type":"tool_search"`} {
+		if !bytes.Contains(forwarded, []byte(toolType)) {
+			t.Fatalf("Codex tool %s was not preserved: %s", toolType, forwarded)
+		}
+	}
+}
+
 func TestAPIProxyPassesGrokResponsesToolsAndEventsThrough(t *testing.T) {
 	type capturedRequest struct {
 		path string

@@ -849,7 +849,7 @@ func startSaveAndLaunch() {
 	}
 	setBusy(true, "正在保存配置…")
 	go func() {
-		models := append([]string(nil), currentModels...)
+		models := withSmartRouterModel(currentModels)
 		var err error
 		if len(models) == 0 {
 			postUpdate(uiUpdate{Status: "正在自动获取模型…"})
@@ -1052,7 +1052,11 @@ func setStatus(value string) {
 func fillModels(models []string) {
 	procSendMessageW.Call(modelList, lbReset, 0, 0)
 	for _, model := range models {
-		procSendMessageW.Call(modelList, lbAddString, 0, uintptr(unsafe.Pointer(utf16(model))))
+		displayName := model
+		if model == smartRouterModel {
+			displayName = "智能路由（Auto）"
+		}
+		procSendMessageW.Call(modelList, lbAddString, 0, uintptr(unsafe.Pointer(utf16(displayName))))
 	}
 	if len(models) > 0 {
 		procSendMessageW.Call(modelList, lbSetCurSel, 0, 0)
@@ -1099,6 +1103,10 @@ func loadSavedConfiguration() {
 	}
 	if currentConfig.BaseURL == "" {
 		currentConfig.BaseURL = defaultBaseURL
+	}
+	currentConfig.Models = withSmartRouterModel(currentConfig.Models)
+	if containsString(currentConfig.Models, smartRouterModel) {
+		currentConfig.DefaultModel = smartRouterModel
 	}
 }
 

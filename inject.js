@@ -180,13 +180,15 @@
   const names = () => Array.isArray(window.__yunqiaoCodexModels) ? window.__yunqiaoCodexModels : [];
   const descriptor = (model, template = null) => {
     const value = template && typeof template === "object" ? { ...template } : {};
+    const isAuto = model === "yunqiao-auto";
+    const displayName = isAuto ? "智能路由（Auto）" : model;
     value.model = model;
     value.id = model;
     value.slug = model;
-    value.name = model;
-    value.displayName = model;
-    value.display_name = model;
-    value.description = "Yunqiao API";
+    value.name = displayName;
+    value.displayName = displayName;
+    value.display_name = displayName;
+    value.description = isAuto ? "Grok 优先 · 文档智能分流 · Astra 仅手动" : "Yunqiao API";
     value.hidden = false;
     value.isDefault = model === window.__yunqiaoCodexDefaultModel;
     value.is_default = value.isDefault;

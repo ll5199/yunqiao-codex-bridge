@@ -44,12 +44,13 @@ func startAPIProxy(rawTarget, apiKey string, logger func(string, string)) (*apiP
 
 	store := newPersistentImageStore(imageStorageDirectory(), logger)
 	transport := newCompatibilityTransport(http.DefaultTransport, logger)
+	routeMemory := newSmartRouteMemory(256)
 	reverse := &httputil.ReverseProxy{
 		FlushInterval: 30 * time.Millisecond,
 		Transport:     transport,
 		Director: func(request *http.Request) {
 			incomingPath := request.URL.Path
-			adaptedPath, protocol := adaptResponsesRequest(request, incomingPath, logger)
+			adaptedPath, protocol := adaptResponsesRequestWithMemory(request, incomingPath, logger, routeMemory)
 			if adaptedPath != "" {
 				incomingPath = adaptedPath
 			}
