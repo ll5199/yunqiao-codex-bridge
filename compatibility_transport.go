@@ -12,20 +12,37 @@ import (
 )
 
 type compatibilityTransport struct {
-	base   http.RoundTripper
-	gemini sync.Mutex
-	logger func(string, string)
+	base       http.RoundTripper
+	gemini     sync.Mutex
+	logger     func(string, string)
+	retryDelay time.Duration
 }
 
 func newCompatibilityTransport(base http.RoundTripper, logger func(string, string)) http.RoundTripper {
 	if base == nil {
 		base = http.DefaultTransport
 	}
-	return &compatibilityTransport{base: base, logger: logger}
+	return &compatibilityTransport{base: base, logger: logger, retryDelay: 3 * time.Second}
 }
 
 func (transport *compatibilityTransport) RoundTrip(request *http.Request) (*http.Response, error) {
 	response, err := transport.roundTripOnce(request)
+	if err == nil && response != nil && response.StatusCode == http.StatusBadGateway &&
+		request.GetBody != nil && request.Header.Get("X-Yunqiao-Model") == smartRouteGrok {
+		if isGrokConcurrencyLimit(response) {
+			if transport.logger != nil {
+				transport.logger("protocol.retry", "family=grok reason=concurrency_limit delay="+transport.retryDelay.String())
+			}
+			if waitErr := waitForCompatibilityRetry(request, transport.retryDelay); waitErr != nil {
+				return nil, waitErr
+			}
+			retry, retryErr := cloneRequestWithBody(request)
+			if retryErr != nil {
+				return nil, retryErr
+			}
+			response, err = transport.roundTripOnce(retry)
+		}
+	}
 	if err != nil || response == nil || response.StatusCode != http.StatusServiceUnavailable ||
 		request.Header.Get("X-Yunqiao-Smart-Route") != "1" || request.GetBody == nil ||
 		request.Header.Get("X-Yunqiao-Model") == smartRouteGrok {
@@ -44,6 +61,48 @@ func (transport *compatibilityTransport) RoundTrip(request *http.Request) (*http
 		))
 	}
 	return transport.roundTripOnce(retry)
+}
+
+func isGrokConcurrencyLimit(response *http.Response) bool {
+	body, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
+	_ = response.Body.Close()
+	if err != nil {
+		response.Body = io.NopCloser(bytes.NewReader(body))
+		response.ContentLength = int64(len(body))
+		return false
+	}
+	lower := strings.ToLower(string(body))
+	limited := strings.Contains(lower, "concurrency limit exceeded for user")
+	if !limited {
+		response.Body = io.NopCloser(bytes.NewReader(body))
+		response.ContentLength = int64(len(body))
+	}
+	return limited
+}
+
+func waitForCompatibilityRetry(request *http.Request, delay time.Duration) error {
+	if delay <= 0 {
+		return nil
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-request.Context().Done():
+		return request.Context().Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+func cloneRequestWithBody(request *http.Request) (*http.Request, error) {
+	body, err := request.GetBody()
+	if err != nil {
+		return nil, err
+	}
+	retry := request.Clone(request.Context())
+	retry.Body = body
+	retry.GetBody = request.GetBody
+	return retry, nil
 }
 
 func (transport *compatibilityTransport) roundTripOnce(request *http.Request) (*http.Response, error) {

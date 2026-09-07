@@ -26,6 +26,7 @@ const (
 type apiProxy struct {
 	server    *http.Server
 	store     *imageStore
+	activity  *requestActivityTracker
 	done      chan struct{}
 	once      sync.Once
 	startedAt int64
@@ -43,6 +44,7 @@ func startAPIProxy(rawTarget, apiKey string, logger func(string, string)) (*apiP
 	}
 
 	store := newPersistentImageStore(imageStorageDirectory(), logger)
+	activity := newRequestActivityTracker()
 	transport := newCompatibilityTransport(http.DefaultTransport, logger)
 	routeMemory := newSmartRouteMemory(256)
 	reverse := &httputil.ReverseProxy{
@@ -57,6 +59,7 @@ func startAPIProxy(rawTarget, apiKey string, logger func(string, string)) (*apiP
 			if protocol != "" {
 				request.Header.Set("X-Yunqiao-Protocol", protocol)
 			}
+			activity.begin(request, request.Header.Get("X-Yunqiao-Model"))
 			targetPath := strings.TrimRight(target.Path, "/")
 			if protocol == "gemini-image" {
 				targetPath = ""
@@ -85,12 +88,14 @@ func startAPIProxy(rawTarget, apiKey string, logger func(string, string)) (*apiP
 			}
 			if (response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices) &&
 				response.Request.Header.Get("X-Yunqiao-Model") != "" {
-				return adaptCompatibilityResponse(response, "native-error", store, logger)
-			}
-			if protocol := response.Request.Header.Get("X-Yunqiao-Protocol"); protocol != "" {
-				return adaptCompatibilityResponse(response, protocol, store, logger)
-			}
-			if strings.Contains(strings.ToLower(response.Header.Get("Content-Type")), "text/event-stream") {
+				if err := adaptCompatibilityResponse(response, "native-error", store, logger); err != nil {
+					return err
+				}
+			} else if protocol := response.Request.Header.Get("X-Yunqiao-Protocol"); protocol != "" {
+				if err := adaptCompatibilityResponse(response, protocol, store, logger); err != nil {
+					return err
+				}
+			} else if strings.Contains(strings.ToLower(response.Header.Get("Content-Type")), "text/event-stream") {
 				response.Header.Del("Content-Length")
 				response.ContentLength = -1
 				response.Body = newImageCompatibleSSEBody(response.Body, store, logger)
@@ -101,9 +106,11 @@ func startAPIProxy(rawTarget, apiKey string, logger func(string, string)) (*apiP
 					store:       store,
 				}
 			}
+			activity.wrap(response)
 			return nil
 		},
 		ErrorHandler: func(writer http.ResponseWriter, request *http.Request, proxyErr error) {
+			activity.finish(requestActivityID(request))
 			if logger != nil {
 				logger("proxy.error", proxyErr.Error())
 			}
@@ -117,6 +124,7 @@ func startAPIProxy(rawTarget, apiKey string, logger func(string, string)) (*apiP
 		writer.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(writer).Encode(map[string]any{"status": "ok", "version": appVersion})
 	})
+	mux.HandleFunc("/yunqiao/activity", activity.serveHTTP)
 	mux.HandleFunc("/yunqiao/images", func(writer http.ResponseWriter, request *http.Request) {
 		setLocalCORS(writer)
 		writer.Header().Set("Cache-Control", "no-store")
@@ -165,7 +173,7 @@ func startAPIProxy(rawTarget, apiKey string, logger func(string, string)) (*apiP
 		ReadHeaderTimeout: 15 * time.Second,
 	}
 	proxy := &apiProxy{
-		server: server, store: store, done: make(chan struct{}),
+		server: server, store: store, activity: activity, done: make(chan struct{}),
 		startedAt: time.Now().UnixMilli(), logger: logger,
 	}
 	go func() {
