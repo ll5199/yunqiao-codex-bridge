@@ -37,6 +37,10 @@ func adaptResponsesRequestWithMemory(request *http.Request, path string, logger 
 		decision := chooseSmartRoute(input)
 		decision = memory.resolve(stringValue(input["prompt_cache_key"]), decision)
 		input["model"] = decision.Model
+		if smartRouteUsesLowReasoning(decision) {
+			input["reasoning"] = map[string]any{"effort": "low"}
+			request.Header.Set("X-Yunqiao-Reasoning-Effort", "low")
+		}
 		encoded, marshalErr := json.Marshal(input)
 		if marshalErr != nil {
 			return path, ""
@@ -107,6 +111,11 @@ func adaptResponsesRequestWithMemory(request *http.Request, path string, logger 
 		logger("protocol.adapted", fmt.Sprintf("model=%s responses=%s protocol=%s", safeLogID(model), adaptedPath, protocol))
 	}
 	return adaptedPath, protocol
+}
+
+func smartRouteUsesLowReasoning(decision smartRouteDecision) bool {
+	return decision.Model == smartRouteGrok && (decision.Reason == "routine_bid_work" ||
+		decision.Reason == "routine_file_operation" || decision.Reason == "session_continuation")
 }
 
 func replaceRequestBody(request *http.Request, body []byte) {
@@ -349,6 +358,9 @@ func compatibilityErrorMessage(family, model string, status int, body []byte) st
 	case family == "gemini" && status == http.StatusTooManyRequests &&
 		(strings.Contains(lower, "concurrency slot") || strings.Contains(lower, "resource_exhausted")):
 		return "Gemini 请求未完成：当前 Sub2API 账号的并发槽仍被其他请求占用。Bridge 已启用 Gemini 请求排队；如果持续出现，请在 Sub2API 检查该账号的并发数、限流状态或更换可用账号。"
+	case family == "grok" && status == http.StatusBadGateway &&
+		strings.Contains(lower, "concurrency limit exceeded for user"):
+		return "Grok 请求未完成：当前 Sub2API 上游账号的并发已满。Bridge 已等待 3 秒并自动重试一次；如果仍然出现，请稍后再试或在 Sub2API 增加可用 Grok 账号。"
 	case family == "grok" && status == http.StatusBadRequest &&
 		strings.Contains(lower, "xai upstream"):
 		return fmt.Sprintf("Grok 请求被 xAI 上游拒绝（HTTP 400）。Bridge 已使用正确接口和请求格式；请在 Sub2API 检查模型 %s 所属的 xAI 渠道账号、额度、模型权限及渠道状态。", model)

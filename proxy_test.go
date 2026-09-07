@@ -274,10 +274,51 @@ func TestSmartRouterRewritesVirtualModelAndPreservesResponsesTools(t *testing.T)
 	if request.Header.Get("X-Yunqiao-Smart-Route") != "1" || request.Header.Get("X-Yunqiao-Model") != smartRouteGrok {
 		t.Fatalf("smart route headers missing: %v", request.Header)
 	}
+	if !bytes.Contains(forwarded, []byte(`"reasoning":{"effort":"low"}`)) ||
+		request.Header.Get("X-Yunqiao-Reasoning-Effort") != "low" {
+		t.Fatalf("routine Auto Grok request did not force low reasoning: body=%s headers=%v", forwarded, request.Header)
+	}
 	for _, toolType := range []string{`"type":"custom"`, `"type":"namespace"`, `"type":"tool_search"`} {
 		if !bytes.Contains(forwarded, []byte(toolType)) {
 			t.Fatalf("Codex tool %s was not preserved: %s", toolType, forwarded)
 		}
+	}
+}
+
+func TestManualGrokPreservesReasoningEffort(t *testing.T) {
+	body := `{"model":"grok-4.6","input":"inspect the workspace","reasoning":{"effort":"high"},"stream":true}`
+	request := httptest.NewRequest(http.MethodPost, "http://localhost/v1/responses", strings.NewReader(body))
+	_, _ = adaptResponsesRequest(request, request.URL.Path, nil)
+	forwarded, _ := io.ReadAll(request.Body)
+	if string(forwarded) != body || request.Header.Get("X-Yunqiao-Reasoning-Effort") != "" {
+		t.Fatalf("manual Grok reasoning was changed: body=%s headers=%v", forwarded, request.Header)
+	}
+}
+
+func TestComplexSmartRouteDoesNotForceLowReasoning(t *testing.T) {
+	body := `{"model":"yunqiao-auto","input":"编写工程投标施工组织设计和质量保证措施","reasoning":{"effort":"high"},"stream":true}`
+	request := httptest.NewRequest(http.MethodPost, "http://localhost/v1/responses", strings.NewReader(body))
+	_, _ = adaptResponsesRequest(request, request.URL.Path, nil)
+	forwarded, _ := io.ReadAll(request.Body)
+	if !bytes.Contains(forwarded, []byte(`"model":"gpt-5.6-sol"`)) ||
+		!bytes.Contains(forwarded, []byte(`"reasoning":{"effort":"high"}`)) {
+		t.Fatalf("complex route reasoning was changed: %s", forwarded)
+	}
+}
+
+func TestAutoGrokToolContinuationKeepsLowReasoning(t *testing.T) {
+	memory := newSmartRouteMemory(4)
+	firstBody := `{"model":"yunqiao-auto","input":"查找文件并复制内容","prompt_cache_key":"thread-low","stream":true}`
+	first := httptest.NewRequest(http.MethodPost, "http://localhost/v1/responses", strings.NewReader(firstBody))
+	_, _ = adaptResponsesRequestWithMemory(first, first.URL.Path, nil, memory)
+
+	continuationBody := `{"model":"yunqiao-auto","input":[{"type":"function_call_output","role":"tool","output":"done"}],"prompt_cache_key":"thread-low","reasoning":{"effort":"medium"},"stream":true}`
+	continuation := httptest.NewRequest(http.MethodPost, "http://localhost/v1/responses", strings.NewReader(continuationBody))
+	_, _ = adaptResponsesRequestWithMemory(continuation, continuation.URL.Path, nil, memory)
+	forwarded, _ := io.ReadAll(continuation.Body)
+	if !bytes.Contains(forwarded, []byte(`"model":"grok-4.6"`)) ||
+		!bytes.Contains(forwarded, []byte(`"reasoning":{"effort":"low"}`)) {
+		t.Fatalf("Auto Grok continuation did not keep low reasoning: %s", forwarded)
 	}
 }
 
@@ -476,6 +517,109 @@ func TestGeminiConcurrencyResponseRetriesOnce(t *testing.T) {
 	}
 }
 
+func TestSmartRoutedGrokConcurrencyResponseRetriesOnce(t *testing.T) {
+	calls := 0
+	transport := newCompatibilityTransport(roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		calls++
+		status := http.StatusOK
+		body := `{"ok":true}`
+		if calls == 1 {
+			status = http.StatusBadGateway
+			body = `{"error":{"message":"Concurrency limit exceeded for user, please retry later"}}`
+		}
+		return &http.Response{
+			StatusCode: status,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(body)),
+			Request:    request,
+		}, nil
+	}), nil).(*compatibilityTransport)
+	transport.retryDelay = 0
+	payload := []byte(`{"model":"grok-4.6","input":"find files","stream":true}`)
+	request := httptest.NewRequest(http.MethodPost, "http://upstream/v1/responses", bytes.NewReader(payload))
+	request.GetBody = func() (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(payload)), nil }
+	request.Header.Set("X-Yunqiao-Smart-Route", "1")
+	request.Header.Set("X-Yunqiao-Model", smartRouteGrok)
+	response, err := transport.RoundTrip(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if calls != 2 || response.StatusCode != http.StatusOK {
+		t.Fatalf("unexpected Grok retry result: calls=%d status=%d", calls, response.StatusCode)
+	}
+}
+
+func TestRequestActivityTracksWaitingStreamingAndTool(t *testing.T) {
+	tracker := newRequestActivityTracker()
+	request := httptest.NewRequest(http.MethodPost, "http://localhost/v1/responses", strings.NewReader(`{}`))
+	tracker.begin(request, smartRouteGrok)
+	if snapshot := tracker.snapshot(); !snapshot.Active || snapshot.Stage != "waiting" || snapshot.Model != smartRouteGrok {
+		t.Fatalf("unexpected waiting activity: %#v", snapshot)
+	}
+	response := &http.Response{
+		Request: request,
+		Body: io.NopCloser(strings.NewReader(
+			`data: {"type":"response.output_item.added","item":{"type":"custom_tool_call"}}` + "\n\n")),
+	}
+	tracker.wrap(response)
+	buffer := make([]byte, 4096)
+	if count, err := response.Body.Read(buffer); count == 0 || err != nil {
+		t.Fatalf("activity body read failed: count=%d err=%v", count, err)
+	}
+	if snapshot := tracker.snapshot(); !snapshot.Active || snapshot.Stage != "tool" {
+		t.Fatalf("unexpected tool activity: %#v", snapshot)
+	}
+	_ = response.Body.Close()
+	if snapshot := tracker.snapshot(); snapshot.Active {
+		t.Fatalf("activity remained active after close: %#v", snapshot)
+	}
+}
+
+func TestRequestActivityEndpoint(t *testing.T) {
+	tracker := newRequestActivityTracker()
+	request := httptest.NewRequest(http.MethodPost, "http://localhost/v1/responses", strings.NewReader(`{}`))
+	tracker.begin(request, smartRouteGrok)
+	recorder := httptest.NewRecorder()
+	tracker.serveHTTP(recorder, httptest.NewRequest(http.MethodGet, "/yunqiao/activity", nil))
+	if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), `"active":true`) ||
+		!strings.Contains(recorder.Body.String(), `"stage":"waiting"`) {
+		t.Fatalf("unexpected activity response: code=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestDirectGrokConcurrencyResponseRetriesOnce(t *testing.T) {
+	calls := 0
+	transport := newCompatibilityTransport(roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		calls++
+		status := http.StatusOK
+		body := `{"ok":true}`
+		if calls == 1 {
+			status = http.StatusBadGateway
+			body = `{"error":{"message":"Concurrency limit exceeded for user"}}`
+		}
+		return &http.Response{
+			StatusCode: status,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(body)),
+			Request:    request,
+		}, nil
+	}), nil).(*compatibilityTransport)
+	transport.retryDelay = 0
+	payload := []byte(`{"model":"grok-4.6","input":"test"}`)
+	request := httptest.NewRequest(http.MethodPost, "http://upstream/v1/responses", bytes.NewReader(payload))
+	request.GetBody = func() (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(payload)), nil }
+	request.Header.Set("X-Yunqiao-Model", smartRouteGrok)
+	response, err := transport.RoundTrip(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if calls != 2 || response.StatusCode != http.StatusOK {
+		t.Fatalf("direct Grok retry failed: calls=%d status=%d", calls, response.StatusCode)
+	}
+}
+
 func TestSmartRoute503FallsBackToGrok(t *testing.T) {
 	models := make([]string, 0, 2)
 	transport := newCompatibilityTransport(roundTripFunc(func(request *http.Request) (*http.Response, error) {
@@ -584,5 +728,15 @@ func TestGenericUnavailableErrorIsExplained(t *testing.T) {
 	)
 	if !strings.Contains(message, "上游账号") || !strings.Contains(message, "智能路由已尝试备用模型") {
 		t.Fatalf("unexpected generic 503 explanation: %s", message)
+	}
+}
+
+func TestGrokConcurrencyErrorIsExplained(t *testing.T) {
+	message := compatibilityErrorMessage(
+		"grok", smartRouteGrok, http.StatusBadGateway,
+		[]byte(`{"error":{"message":"Concurrency limit exceeded for user, please retry later"}}`),
+	)
+	if !strings.Contains(message, "自动重试一次") || !strings.Contains(message, "并发已满") {
+		t.Fatalf("unexpected Grok concurrency explanation: %s", message)
 	}
 }

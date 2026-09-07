@@ -7,11 +7,11 @@
   window.__yunqiaoCodexModels = Array.from(new Set(incoming));
   window.__yunqiaoCodexDefaultModel = String(window.__YUNQIAO_INJECT_DEFAULT__ || window.__yunqiaoCodexModels[0] || "");
 
-  if (window.__yunqiaoCodexBridgeInstalled === "1.4.8" && window.__yunqiaoCodexBridgeMode === bridgeMode) {
+  if (window.__yunqiaoCodexBridgeInstalled === "1.4.9" && window.__yunqiaoCodexBridgeMode === bridgeMode) {
     window.__yunqiaoCodexBridgeRefresh?.();
     return;
   }
-  window.__yunqiaoCodexBridgeInstalled = "1.4.8";
+  window.__yunqiaoCodexBridgeInstalled = "1.4.9";
   window.__yunqiaoCodexBridgeMode = bridgeMode;
 
   function installChineseLocale() {
@@ -509,6 +509,61 @@
       "hiddenModels", "hidden_models", "modelMetadata", "model_metadata"].some((key) => key in value);
     return hasContainerSignal && Array.isArray(value.models) &&
       value.models.every((item) => typeof item === "string");
+  }
+
+  let requestActivityPollInFlight = false;
+  let latestRequestActivity = null;
+  function requestActivityLabel(activity) {
+    const model = String(activity?.model || "模型");
+    const displayModel = model.toLowerCase().includes("grok") ? "Grok" : model;
+    const seconds = Math.max(0, Math.floor(Number(activity?.elapsed_ms || 0) / 1000));
+    if (activity?.stage === "tool") return `${displayModel} 正在执行文件工具 · ${seconds}秒`;
+    if (activity?.stage === "streaming") return `${displayModel} 正在返回结果 · ${seconds}秒`;
+    if (seconds >= 45) return `${displayModel} 仍在处理，正在等待首次响应 · ${seconds}秒`;
+    return `${displayModel} 正在分析 · ${seconds}秒`;
+  }
+
+  function renderRequestActivity() {
+    let element = document.querySelector("[data-yunqiao-request-activity]");
+    if (!latestRequestActivity?.active) {
+      element?.remove();
+      return;
+    }
+    if (!element) {
+      element = document.createElement("div");
+      element.dataset.yunqiaoRequestActivity = "true";
+      element.setAttribute("role", "status");
+      element.setAttribute("aria-live", "polite");
+      element.style.cssText = [
+        "position:fixed", "left:50%", "bottom:92px", "transform:translateX(-50%)",
+        "z-index:2147483642", "pointer-events:none", "max-width:min(520px,calc(100vw - 32px))",
+        "padding:8px 13px", "border:1px solid rgba(127,127,127,.32)", "border-radius:999px",
+        "background:color-mix(in srgb, Canvas 92%, transparent)", "color:CanvasText",
+        "box-shadow:0 6px 24px rgba(0,0,0,.16)", "font:12px/1.4 system-ui,sans-serif",
+        "white-space:nowrap", "overflow:hidden", "text-overflow:ellipsis", "backdrop-filter:blur(12px)",
+      ].join(";");
+      (document.body || document.documentElement).appendChild(element);
+    }
+    const label = requestActivityLabel(latestRequestActivity);
+    if (element.textContent !== label) element.textContent = label;
+  }
+
+  async function pollRequestActivity() {
+    if (requestActivityPollInFlight) return;
+    requestActivityPollInFlight = true;
+    try {
+      const response = await fetch("http://127.0.0.1:9230/yunqiao/activity", {
+        cache: "no-store",
+        credentials: "omit",
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      latestRequestActivity = await response.json();
+    } catch {
+      latestRequestActivity = null;
+    } finally {
+      requestActivityPollInFlight = false;
+      renderRequestActivity();
+    }
   }
 
   const capturedImages = window.__yunqiaoGeneratedImages = window.__yunqiaoGeneratedImages || [];
@@ -1052,6 +1107,7 @@
       refreshChineseLocale?.();
       patchStatsig();
       cleanupSidebarArtifacts();
+      void pollRequestActivity();
       void pollProxyImages();
       renderCapturedImages();
       void patchAppServer();
