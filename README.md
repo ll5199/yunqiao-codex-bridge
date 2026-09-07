@@ -57,8 +57,13 @@ Bridge EXE 所在目录（例如桌面的 `yunqiao` 文件夹）创建或选为�
 - 同一 Codex 会话使用 `prompt_cache_key` 记住已选模型，工具调用的后续请求不会在
   任务中途切换模型。路由日志只记录模型、原因、字符数和附件数，不记录文档正文。
 - 启动参数和官方 `localeOverride` 都设置为 `zh-CN`；最长持续重试
-  60 秒并监听延迟加载的多语言开关，因此英文版新装 Windows 也不会回退英文。
-  顶部 File/Edit/View/Help 等 Electron 原生菜单通过本地主进程调试接口汉化。
+  120 秒并监听延迟加载的多语言开关。若官方语言设置或 Statsig 服务未及时生效，
+  Bridge 会对应用导航、按钮、设置项等界面控件启用严格的精确匹配中文兜底；对话正文、
+  提示词、代码、编辑器、终端和模型输出不会被改写。
+- “保存并启动 Codex”和“原生账号启动”都会启用中文界面；原生账号模式仍不经过云桥
+  API 代理。首次写入官方中文设置时，Bridge 会自动完整重启一次 Codex，让 Electron
+  主进程重新加载语言目录；随后读取页面端汉化状态再显示启动成功，不再把脚本无异常
+  误报成汉化成功。顶部 File/Edit/View/Help 等 Electron 原生菜单通过本地主进程调试接口汉化。
 - 识别 Responses API 的 `image_generation_call.result`、`b64_json`、
   `image_url`、Data URL 和常见图片 URL。Bridge 从真实 API 响应捕获图片，再通过
   页面轮询和 DevTools 主动推送两条通道显示在最新助手消息下方。

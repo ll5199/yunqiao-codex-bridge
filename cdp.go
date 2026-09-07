@@ -34,20 +34,52 @@ type cdpTarget struct {
 	WebSocketDebuggerURL string `json:"webSocketDebuggerUrl"`
 }
 
-const rendererBridgeVersion = "1.4.5"
+const rendererBridgeVersion = "1.4.6"
+
+type chineseLocaleState struct {
+	Installed         bool   `json:"installed"`
+	Active            bool   `json:"active"`
+	OfficialSetting   bool   `json:"officialSetting"`
+	FallbackInstalled bool   `json:"fallbackInstalled"`
+	RestartRequired   bool   `json:"restartRequired"`
+	Translated        int    `json:"translated"`
+	VisibleChinese    int    `json:"visibleChinese"`
+	VisibleEnglish    int    `json:"visibleEnglish"`
+	Mode              string `json:"mode"`
+	Error             string `json:"error"`
+	Heartbeat         int64  `json:"heartbeat"`
+}
+
+type nativeMenuState struct {
+	Status    string   `json:"status"`
+	Reason    string   `json:"reason"`
+	Changed   int      `json:"changed"`
+	TopLabels []string `json:"topLabels"`
+}
 
 func rendererExpression(models []string, defaultModel string) string {
 	modelJSON, _ := json.Marshal(models)
 	defaultJSON, _ := json.Marshal(defaultModel)
-	return "window.__YUNQIAO_INJECT_MODELS__=" + string(modelJSON) +
+	return "window.__YUNQIAO_LOCALIZATION_ONLY__=false;window.__YUNQIAO_INJECT_MODELS__=" + string(modelJSON) +
 		";window.__YUNQIAO_INJECT_DEFAULT__=" + string(defaultJSON) + ";\n" + rendererInjection
+}
+
+func localizationExpression() string {
+	return "window.__YUNQIAO_LOCALIZATION_ONLY__=true;window.__YUNQIAO_INJECT_MODELS__=[];window.__YUNQIAO_INJECT_DEFAULT__='';\n" + rendererInjection
 }
 
 func injectIntoCodex(port int, models []string, defaultModel string, progress func(string)) error {
 	if len(models) == 0 {
 		return errors.New("没有可注入的模型")
 	}
-	expression := rendererExpression(models, defaultModel)
+	return injectExpressionIntoCodex(port, rendererExpression(models, defaultModel), "正在向官方 Codex 注入模型列表…", progress)
+}
+
+func injectLocalizationIntoCodex(port int, progress func(string)) error {
+	return injectExpressionIntoCodex(port, localizationExpression(), "正在向官方 Codex 注入中文界面…", progress)
+}
+
+func injectExpressionIntoCodex(port int, expression, progressText string, progress func(string)) error {
 
 	client := &http.Client{Timeout: 1500 * time.Millisecond}
 	deadline := time.Now().Add(28 * time.Second)
@@ -69,7 +101,7 @@ func injectIntoCodex(port int, models []string, defaultModel string, progress fu
 				continue
 			}
 			if progress != nil {
-				progress("正在向官方 Codex 注入模型列表…")
+				progress(progressText)
 			}
 			if err := injectTarget(target.WebSocketDebuggerURL, expression); err != nil {
 				lastError = err
@@ -143,7 +175,7 @@ func maintainCodexInjection(port int, models []string, defaultModel string, done
 
 func rendererHealthExpression(modelCount int, defaultModel string) string {
 	defaultJSON, _ := json.Marshal(defaultModel)
-	return fmt.Sprintf("(() => { const s=window.__yunqiaoCodexBridgeStatus; return window.__yunqiaoCodexBridgeInstalled===%q && s?.installed===true && s.models===%d && window.__yunqiaoCodexDefaultModel===%s && Date.now()-Number(s.heartbeat||0)<15000; })()", rendererBridgeVersion, modelCount, defaultJSON)
+	return fmt.Sprintf("(() => { const s=window.__yunqiaoCodexBridgeStatus; const l=window.__yunqiaoChineseLocaleStatus; return window.__yunqiaoCodexBridgeInstalled===%q && s?.installed===true && s.models===%d && window.__yunqiaoCodexDefaultModel===%s && Date.now()-Number(s.heartbeat||0)<15000 && l?.installed===true && l?.active===true && Date.now()-Number(l.heartbeat||0)<15000; })()", rendererBridgeVersion, modelCount, defaultJSON)
 }
 
 func targetBridgeHealthy(webSocketURL, expression string) (bool, error) {
@@ -213,9 +245,90 @@ func injectTarget(webSocketURL, expression string) error {
 	return nil
 }
 
+func waitForChineseLocalization(port int, timeout time.Duration) (chineseLocaleState, error) {
+	client := &http.Client{Timeout: 1500 * time.Millisecond}
+	deadline := time.Now().Add(timeout)
+	var lastState chineseLocaleState
+	var activeState chineseLocaleState
+	var lastError error
+	for time.Now().Before(deadline) {
+		targets, err := listCDPTargets(client, port)
+		if err != nil {
+			lastError = err
+			time.Sleep(250 * time.Millisecond)
+			continue
+		}
+		for _, target := range targets {
+			if target.WebSocketDebuggerURL == "" ||
+				(target.Type != "page" && target.Type != "webview") ||
+				strings.HasPrefix(target.URL, "devtools://") {
+				continue
+			}
+			state, err := targetChineseLocaleState(target.WebSocketDebuggerURL)
+			if err != nil {
+				lastError = err
+				continue
+			}
+			if state.Installed {
+				lastState = state
+			}
+			if state.Installed && state.Active && (state.OfficialSetting || state.FallbackInstalled) {
+				activeState = state
+			}
+			if state.Installed && state.Active && state.OfficialSetting {
+				return state, nil
+			}
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	if activeState.Installed && activeState.Active {
+		return activeState, nil
+	}
+	if lastState.Error != "" {
+		return lastState, fmt.Errorf("中文设置未生效：%s", lastState.Error)
+	}
+	if lastError != nil {
+		return lastState, fmt.Errorf("无法确认中文界面：%w", lastError)
+	}
+	return lastState, errors.New("无法确认中文界面注入状态")
+}
+
+func targetChineseLocaleState(webSocketURL string) (chineseLocaleState, error) {
+	var state chineseLocaleState
+	socket, err := dialWebSocket(webSocketURL)
+	if err != nil {
+		return state, err
+	}
+	defer socket.Close()
+	result, err := socket.command("Runtime.evaluate", map[string]any{
+		"expression":    "JSON.stringify(window.__yunqiaoChineseLocaleStatus || null)",
+		"returnByValue": true,
+	})
+	if err != nil {
+		return state, err
+	}
+	if exception, ok := result["exceptionDetails"]; ok && exception != nil {
+		return state, errors.New("读取中文界面状态时页面脚本异常")
+	}
+	value, ok := runtimeStringValue(result)
+	if !ok || value == "" || value == "null" {
+		return state, nil
+	}
+	if err := json.Unmarshal([]byte(value), &state); err != nil {
+		return state, fmt.Errorf("解析中文界面状态失败：%w", err)
+	}
+	return state, nil
+}
+
+func runtimeStringValue(result map[string]any) (string, bool) {
+	remote, _ := result["result"].(map[string]any)
+	value, ok := remote["value"].(string)
+	return value, ok
+}
+
 func localizeNativeMenu(port int) error {
 	client := &http.Client{Timeout: 1500 * time.Millisecond}
-	deadline := time.Now().Add(14 * time.Second)
+	deadline := time.Now().Add(30 * time.Second)
 	var lastError error
 	for time.Now().Before(deadline) {
 		targets, err := listCDPTargets(client, port)
@@ -261,7 +374,21 @@ func localizeNativeMenu(port int) error {
 				encoded, _ := json.Marshal(exception)
 				lastError = fmt.Errorf("菜单脚本异常：%s", encoded)
 			} else {
-				return nil
+				value, ok := runtimeStringValue(result)
+				if !ok {
+					lastError = errors.New("菜单脚本没有返回状态")
+				} else {
+					var state nativeMenuState
+					if err := json.Unmarshal([]byte(value), &state); err != nil {
+						lastError = fmt.Errorf("菜单脚本状态无效：%w", err)
+					} else if state.Status == "ok" {
+						return nil
+					} else if state.Reason != "" {
+						lastError = errors.New(state.Reason)
+					} else {
+						lastError = fmt.Errorf("菜单汉化状态：%s", state.Status)
+					}
+				}
 			}
 		} else {
 			lastError = commandErr

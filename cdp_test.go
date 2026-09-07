@@ -15,6 +15,12 @@ func TestInjectionContainsIndependentSentinelAndModelPatch(t *testing.T) {
 		`localeOverride`,
 		`installStatsigSetter`,
 		`localeSyncStarted`,
+		`__yunqiaoChineseLocaleStatus`,
+		`fallbackInstalled`,
+		`process-restart.v1`,
+		`uiTranslations`,
+		`[data-testid='conversation-turn']`,
+		`__YUNQIAO_LOCALIZATION_ONLY__`,
 		`image_generation`,
 		`生成的图片`,
 		`__yunqiaoAcceptProxyImages`,
@@ -28,6 +34,9 @@ func TestInjectionContainsIndependentSentinelAndModelPatch(t *testing.T) {
 		if !strings.Contains(rendererInjection, expected) {
 			t.Fatalf("injection is missing %q", expected)
 		}
+	}
+	if strings.Contains(rendererInjection, "window.location.reload()") {
+		t.Fatal("locale injection still uses a renderer reload instead of requesting a full Codex process restart")
 	}
 	if !strings.Contains(rendererInjection, `__yunqiaoCodexBridgeInstalled = "`+rendererBridgeVersion+`"`) {
 		t.Fatal("renderer bridge version does not match the CDP watchdog")
@@ -52,7 +61,7 @@ func TestInjectionContainsIndependentSentinelAndModelPatch(t *testing.T) {
 
 func TestRendererHealthExpressionChecksVersionAndHeartbeat(t *testing.T) {
 	expression := rendererHealthExpression(3, `model-"quoted"`)
-	for _, expected := range []string{rendererBridgeVersion, "s.models===3", "s.heartbeat", `model-\"quoted\"`} {
+	for _, expected := range []string{rendererBridgeVersion, "s.models===3", "s.heartbeat", "l?.installed===true", "l?.active===true", `model-\"quoted\"`} {
 		if !strings.Contains(expression, expected) {
 			t.Fatalf("health expression is missing %q: %s", expected, expression)
 		}
@@ -60,9 +69,18 @@ func TestRendererHealthExpressionChecksVersionAndHeartbeat(t *testing.T) {
 }
 
 func TestNativeMenuInjectionUsesElectronMainProcess(t *testing.T) {
-	for _, expected := range []string{"process.mainModule", "Menu.setApplicationMenu", `["File", "文件"]`} {
+	for _, expected := range []string{"process.mainModule", "globalThis.require", "process.getBuiltinModule", "Menu.setApplicationMenu", `status: "pending"`, `["File", "文件"]`} {
 		if !strings.Contains(nativeMenuInjection, expected) {
 			t.Fatalf("native menu injection is missing %q", expected)
+		}
+	}
+}
+
+func TestLocalizationOnlyExpressionDoesNotInjectModels(t *testing.T) {
+	expression := localizationExpression()
+	for _, expected := range []string{"__YUNQIAO_LOCALIZATION_ONLY__=true", "__YUNQIAO_INJECT_MODELS__=[]", rendererBridgeVersion} {
+		if !strings.Contains(expression, expected) {
+			t.Fatalf("localization-only expression is missing %q", expected)
 		}
 	}
 }
