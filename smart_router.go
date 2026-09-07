@@ -99,15 +99,14 @@ func chooseSmartRoute(input map[string]any) smartRouteDecision {
 	text, fileCount := smartRoutingInput(input["input"])
 	lower := strings.ToLower(text)
 	decision := smartRouteDecision{
-		Model: smartRouteGrok, Reason: "general", TextChars: utf8.RuneCountInString(text), FileCount: fileCount,
+		Model: smartRouteGrok, Reason: "routine_bid_work", TextChars: utf8.RuneCountInString(text), FileCount: fileCount,
 	}
 
-	if containsRoutingTerm(lower, []string{
-		"contract", "agreement", "legal", "law", "regulatory", "compliance", "financial statement",
-		"audit", "due diligence", "patent", "conflict clause", "合同", "协议", "法律", "法规", "合规",
-		"财务报表", "审计", "尽调", "专利", "风险条款", "矛盾条款",
-	}) {
-		decision.Model, decision.Reason = smartRouteSol, "high_risk_document"
+	// Tender work is dominated by inexpensive tool operations. Keep explicit
+	// find/copy/paste/replace/format requests on Grok even when the target file
+	// happens to be a technical proposal or the operation is described as batch.
+	if isRoutineBidFileOperation(lower) {
+		decision.Reason = "routine_file_operation"
 		return decision
 	}
 	if containsRoutingTerm(lower, []string{
@@ -124,7 +123,50 @@ func chooseSmartRoute(input map[string]any) smartRouteDecision {
 		decision.Model, decision.Reason = smartRouteTerra, "large_multi_document"
 		return decision
 	}
+	// Final compliance and disqualification review is performed by a person.
+	// Sol is therefore reserved for difficult drafting and substantive rewrites,
+	// not merely because a prompt mentions a tender, contract, law or risk.
+	if isComplexBidDrafting(lower) {
+		decision.Model, decision.Reason = smartRouteSol, "complex_bid_drafting"
+		return decision
+	}
 	return decision
+}
+
+func isRoutineBidFileOperation(text string) bool {
+	return containsRoutingTerm(text, []string{
+		"find and replace", "copy and paste", "copy/paste", "replace company name", "replace date",
+		"rename file", "find file", "search files", "locate file", "open file", "format document",
+		"复制粘贴", "复制并粘贴", "查找替换", "查找并替换", "批量替换", "全局替换",
+		"替换公司名称", "修改公司名称", "替换日期", "修改日期", "修改页码", "调整格式",
+		"统一格式", "套用格式", "整理目录", "更新目录", "重命名文件", "查找文件",
+		"搜索文件", "定位文件", "打开文件",
+	})
+}
+
+func isComplexBidDrafting(text string) bool {
+	if containsRoutingTerm(text, []string{
+		"complex rewrite", "substantive rewrite", "scoring point response", "point-by-point response",
+		"复杂改写", "深度重写", "评分点响应", "逐条响应",
+	}) {
+		return true
+	}
+	draftingAction := containsRoutingTerm(text, []string{
+		"draft", "write", "rewrite", "expand", "polish", "optimize", "create",
+		"撰写", "编写", "起草", "重写", "改写", "扩写", "润色", "优化", "生成",
+		"制定", "完善", "制作", "做一份",
+	})
+	draftingSubject := containsRoutingTerm(text, []string{
+		"construction organization design", "technical proposal", "method statement", "implementation plan",
+		"technical response", "project execution plan", "quality assurance plan", "safety plan",
+		"emergency response plan", "scoring criteria", "evaluation criteria", "technical section", "response text",
+		"施工组织设计", "技术方案", "施工方案", "实施方案", "项目实施方案", "技术标",
+		"技术章节", "质量保证措施", "质量保障措施", "安全保证措施", "安全保障措施",
+		"安全文明施工", "环境保护措施", "环保措施", "应急预案", "应急保障措施",
+		"项目重点", "项目难点", "技术难点", "评分标准", "评分办法", "评分细则",
+		"响应内容", "技术内容", "核心章节", "核心段落",
+	})
+	return draftingAction && draftingSubject
 }
 
 func smartRoutingInput(value any) (string, int) {
