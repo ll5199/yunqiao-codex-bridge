@@ -33,7 +33,12 @@ func TestChooseSmartRoute(t *testing.T) {
 		{name: "general defaults to Grok", input: "帮我写一封客户回访邮件", want: smartRouteGrok},
 		{name: "structured batch uses Luna", input: "批量提取这些发票的日期、金额和税号，输出表格", want: smartRouteLuna},
 		{name: "multiple documents use Terra", input: "请读取整个文件夹，综合多份文档给出项目总结", want: smartRouteTerra},
-		{name: "high risk document uses Sol", input: "审查这份合同的合规风险条款", want: smartRouteSol},
+		{name: "complex bid drafting uses Sol", input: "编写工程投标施工组织设计和质量保证措施", want: smartRouteSol},
+		{name: "human review topic stays on Grok", input: "审查这份合同的合规风险条款", want: smartRouteGrok},
+		{name: "batch replacement stays on Grok", input: "批量替换标书中的公司名称和日期", want: smartRouteGrok},
+		{name: "simple proposal edit stays on Grok", input: "修改技术方案中的公司名称并调整格式", want: smartRouteGrok},
+		{name: "reading a proposal stays on Grok", input: "读取技术方案并查找项目负责人姓名", want: smartRouteGrok},
+		{name: "scoring response drafting uses Sol", input: "根据评分标准撰写逐条响应内容", want: smartRouteSol},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -69,7 +74,7 @@ func TestChooseSmartRouteCountsUserFilesAndIgnoresToolOutput(t *testing.T) {
 
 func TestSmartRouteMemoryKeepsToolContinuationOnSessionModel(t *testing.T) {
 	memory := newSmartRouteMemory(4)
-	first := memory.resolve("thread-1", chooseSmartRoute(map[string]any{"input": "审查合同风险"}))
+	first := memory.resolve("thread-1", chooseSmartRoute(map[string]any{"input": "编写施工组织设计"}))
 	if first.Model != smartRouteSol {
 		t.Fatalf("first route = %q, want Sol", first.Model)
 	}
