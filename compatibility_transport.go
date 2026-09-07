@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -23,6 +25,28 @@ func newCompatibilityTransport(base http.RoundTripper, logger func(string, strin
 }
 
 func (transport *compatibilityTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	response, err := transport.roundTripOnce(request)
+	if err != nil || response == nil || response.StatusCode != http.StatusServiceUnavailable ||
+		request.Header.Get("X-Yunqiao-Smart-Route") != "1" || request.GetBody == nil ||
+		request.Header.Get("X-Yunqiao-Model") == smartRouteGrok {
+		return response, err
+	}
+
+	retry, retryErr := smartRouteFallbackRequest(request, smartRouteGrok)
+	if retryErr != nil {
+		return response, nil
+	}
+	_ = response.Body.Close()
+	if transport.logger != nil {
+		transport.logger("router.fallback", fmt.Sprintf(
+			"from=%s to=%s reason=upstream_503",
+			safeLogID(request.Header.Get("X-Yunqiao-Model")), smartRouteGrok,
+		))
+	}
+	return transport.roundTripOnce(retry)
+}
+
+func (transport *compatibilityTransport) roundTripOnce(request *http.Request) (*http.Response, error) {
 	if request.Header.Get("X-Yunqiao-Family") != "gemini" {
 		return transport.base.RoundTrip(request)
 	}
@@ -72,6 +96,38 @@ func (transport *compatibilityTransport) RoundTrip(request *http.Request) (*http
 	}
 	response.Body = &unlockingReadCloser{ReadCloser: response.Body, unlock: transport.gemini.Unlock}
 	return response, nil
+}
+
+func smartRouteFallbackRequest(request *http.Request, model string) (*http.Request, error) {
+	body, err := request.GetBody()
+	if err != nil {
+		return nil, err
+	}
+	payload, err := io.ReadAll(io.LimitReader(body, compatibilityBodyLimit))
+	_ = body.Close()
+	if err != nil {
+		return nil, err
+	}
+	var input map[string]any
+	if err := json.Unmarshal(payload, &input); err != nil {
+		return nil, err
+	}
+	input["model"] = model
+	encoded, err := json.Marshal(input)
+	if err != nil {
+		return nil, err
+	}
+	retry := request.Clone(request.Context())
+	retry.Body = io.NopCloser(bytes.NewReader(encoded))
+	retry.GetBody = func() (io.ReadCloser, error) {
+		return io.NopCloser(bytes.NewReader(encoded)), nil
+	}
+	retry.ContentLength = int64(len(encoded))
+	retry.Header.Set("Content-Type", "application/json")
+	retry.Header.Set("X-Yunqiao-Model", model)
+	retry.Header.Set("X-Yunqiao-Family", "grok")
+	retry.Header.Del("Content-Length")
+	return retry, nil
 }
 
 type unlockingReadCloser struct {

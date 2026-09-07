@@ -83,6 +83,10 @@ func startAPIProxy(rawTarget, apiKey string, logger func(string, string)) (*apiP
 					response.Header.Get("Content-Type"),
 				))
 			}
+			if (response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices) &&
+				response.Request.Header.Get("X-Yunqiao-Model") != "" {
+				return adaptCompatibilityResponse(response, "native-error", store, logger)
+			}
 			if protocol := response.Request.Header.Get("X-Yunqiao-Protocol"); protocol != "" {
 				return adaptCompatibilityResponse(response, protocol, store, logger)
 			}

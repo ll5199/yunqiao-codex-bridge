@@ -7,11 +7,11 @@
   window.__yunqiaoCodexModels = Array.from(new Set(incoming));
   window.__yunqiaoCodexDefaultModel = String(window.__YUNQIAO_INJECT_DEFAULT__ || window.__yunqiaoCodexModels[0] || "");
 
-  if (window.__yunqiaoCodexBridgeInstalled === "1.4.6" && window.__yunqiaoCodexBridgeMode === bridgeMode) {
+  if (window.__yunqiaoCodexBridgeInstalled === "1.4.7" && window.__yunqiaoCodexBridgeMode === bridgeMode) {
     window.__yunqiaoCodexBridgeRefresh?.();
     return;
   }
-  window.__yunqiaoCodexBridgeInstalled = "1.4.6";
+  window.__yunqiaoCodexBridgeInstalled = "1.4.7";
   window.__yunqiaoCodexBridgeMode = bridgeMode;
 
   function installChineseLocale() {

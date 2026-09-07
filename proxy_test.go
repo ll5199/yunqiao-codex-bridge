@@ -271,6 +271,9 @@ func TestSmartRouterRewritesVirtualModelAndPreservesResponsesTools(t *testing.T)
 	if bytes.Contains(forwarded, []byte(smartRouterModel)) || !bytes.Contains(forwarded, []byte(`"model":"grok-4.6"`)) {
 		t.Fatalf("virtual model was not rewritten: %s", forwarded)
 	}
+	if request.Header.Get("X-Yunqiao-Smart-Route") != "1" || request.Header.Get("X-Yunqiao-Model") != smartRouteGrok {
+		t.Fatalf("smart route headers missing: %v", request.Header)
+	}
 	for _, toolType := range []string{`"type":"custom"`, `"type":"namespace"`, `"type":"tool_search"`} {
 		if !bytes.Contains(forwarded, []byte(toolType)) {
 			t.Fatalf("Codex tool %s was not preserved: %s", toolType, forwarded)
@@ -473,6 +476,97 @@ func TestGeminiConcurrencyResponseRetriesOnce(t *testing.T) {
 	}
 }
 
+func TestSmartRoute503FallsBackToGrok(t *testing.T) {
+	models := make([]string, 0, 2)
+	transport := newCompatibilityTransport(roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		body, _ := io.ReadAll(request.Body)
+		var input map[string]any
+		_ = json.Unmarshal(body, &input)
+		models = append(models, stringValue(input["model"]))
+		status := http.StatusOK
+		responseBody := `{"ok":true}`
+		if len(models) == 1 {
+			status = http.StatusServiceUnavailable
+			responseBody = `{"error":{"message":"Service temporarily unavailable","type":"api_error"}}`
+		}
+		return &http.Response{
+			StatusCode: status,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(responseBody)),
+			Request:    request,
+		}, nil
+	}), nil)
+	payload := []byte(`{"model":"gpt-5.6-terra","input":"summarize the folder","stream":true}`)
+	request := httptest.NewRequest(http.MethodPost, "http://upstream/v1/responses", bytes.NewReader(payload))
+	request.GetBody = func() (io.ReadCloser, error) {
+		return io.NopCloser(bytes.NewReader(payload)), nil
+	}
+	request.Header.Set("X-Yunqiao-Smart-Route", "1")
+	request.Header.Set("X-Yunqiao-Model", smartRouteTerra)
+	response, err := transport.RoundTrip(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusOK || len(models) != 2 || models[0] != smartRouteTerra || models[1] != smartRouteGrok {
+		t.Fatalf("unexpected smart fallback: status=%d models=%v", response.StatusCode, models)
+	}
+}
+
+func TestManualModel503DoesNotFallback(t *testing.T) {
+	calls := 0
+	transport := newCompatibilityTransport(roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		calls++
+		return &http.Response{
+			StatusCode: http.StatusServiceUnavailable,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(`{"error":{"message":"Service temporarily unavailable"}}`)),
+			Request:    request,
+		}, nil
+	}), nil)
+	payload := []byte(`{"model":"gpt-5.6-terra","input":"test"}`)
+	request := httptest.NewRequest(http.MethodPost, "http://upstream/v1/responses", bytes.NewReader(payload))
+	request.GetBody = func() (io.ReadCloser, error) {
+		return io.NopCloser(bytes.NewReader(payload)), nil
+	}
+	request.Header.Set("X-Yunqiao-Model", smartRouteTerra)
+	response, err := transport.RoundTrip(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = response.Body.Close()
+	if calls != 1 || response.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("manual model was unexpectedly rerouted: calls=%d status=%d", calls, response.StatusCode)
+	}
+}
+
+func TestAPIProxyConvertsFinal503ToReadableResponse(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		writer.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = io.WriteString(writer, `{"error":{"message":"Service temporarily unavailable","type":"api_error"}}`)
+	}))
+	defer upstream.Close()
+
+	proxy, err := startAPIProxy(upstream.URL+"/v1", "test-secret", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer proxy.close()
+
+	response, err := http.Post(codexProxyBase+"/responses", "application/json",
+		strings.NewReader(`{"model":"gpt-5.6-terra","input":"test","stream":true}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusOK || !bytes.Contains(body, []byte("上游账号")) ||
+		!bytes.Contains(body, []byte("response.completed")) {
+		t.Fatalf("unexpected readable 503 response: status=%d body=%s", response.StatusCode, body)
+	}
+}
+
 func TestExhaustedAccountErrorIsExplained(t *testing.T) {
 	message := compatibilityErrorMessage(
 		"gemini", "gemini-3.5-flash", http.StatusServiceUnavailable,
@@ -480,5 +574,15 @@ func TestExhaustedAccountErrorIsExplained(t *testing.T) {
 	)
 	if !strings.Contains(message, "Sub2API") || !strings.Contains(message, "账号池") {
 		t.Fatalf("unexpected exhausted account message: %s", message)
+	}
+}
+
+func TestGenericUnavailableErrorIsExplained(t *testing.T) {
+	message := compatibilityErrorMessage(
+		"grok", smartRouteGrok, http.StatusServiceUnavailable,
+		[]byte(`{"error":{"message":"Service temporarily unavailable","type":"api_error"}}`),
+	)
+	if !strings.Contains(message, "上游账号") || !strings.Contains(message, "智能路由已尝试备用模型") {
+		t.Fatalf("unexpected generic 503 explanation: %s", message)
 	}
 }
