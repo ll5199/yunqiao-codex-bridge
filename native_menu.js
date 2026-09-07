@@ -82,8 +82,28 @@
     ["Toggle Query Devtools", "切换查询 DevTools"],
     ["Toggle React Scan", "切换 React Scan"],
   ]);
-  const electron = process.mainModule?.require?.("electron");
-  if (!electron?.Menu) return JSON.stringify({ status: "skipped", reason: "electron-menu-unavailable" });
+  const loadElectron = () => {
+    const loaders = [
+      () => process.mainModule?.require?.("electron"),
+      () => typeof globalThis.require === "function" ? globalThis.require("electron") : null,
+      () => typeof module === "object" && typeof module.require === "function" ? module.require("electron") : null,
+      () => {
+        const nodeModule = process.getBuiltinModule?.("module");
+        const requireFromMain = nodeModule?.createRequire?.(process.execPath);
+        return requireFromMain?.("electron") || null;
+      },
+    ];
+    for (const load of loaders) {
+      try {
+        const electron = load();
+        if (electron?.Menu) return electron;
+      } catch {
+      }
+    }
+    return null;
+  };
+  const electron = loadElectron();
+  if (!electron?.Menu) return JSON.stringify({ status: "pending", reason: "electron-menu-unavailable" });
   const Menu = electron.Menu;
   let changed = 0;
   const translateItem = (item) => {
@@ -105,7 +125,8 @@
     Menu.setApplicationMenu = (menu) => original(translateMenu(menu));
   }
   const menu = Menu.getApplicationMenu();
-  if (menu) Menu.setApplicationMenu(translateMenu(menu));
+  if (!menu) return JSON.stringify({ status: "pending", reason: "application-menu-unavailable" });
+  Menu.setApplicationMenu(translateMenu(menu));
   return JSON.stringify({
     status: "ok",
     changed,

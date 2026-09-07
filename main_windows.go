@@ -830,6 +830,14 @@ func startFetch() {
 	}()
 }
 
+func startNativeMenuLocalization() chan error {
+	result := make(chan error, 1)
+	go func(output chan<- error) {
+		output <- localizeNativeMenu(inspectorPort)
+	}(result)
+	return result
+}
+
 func startSaveAndLaunch() {
 	baseURL := getText(baseEdit)
 	apiKey := getText(keyEdit)
@@ -893,10 +901,7 @@ func startSaveAndLaunch() {
 			postUpdate(uiUpdate{Error: err, Done: true})
 			return
 		}
-		menuResult := make(chan error, 1)
-		go func() {
-			menuResult <- localizeNativeMenu(inspectorPort)
-		}()
+		menuResult := startNativeMenuLocalization()
 		err = injectIntoCodex(cdpPort, models, defaultModel, func(status string) {
 			postUpdate(uiUpdate{Status: status})
 		})
@@ -907,7 +912,40 @@ func startSaveAndLaunch() {
 		}
 		go syncProxyImagesToCodex(cdpPort, proxy)
 		go maintainCodexInjection(cdpPort, models, defaultModel, proxy.done, diagnosticLog)
+		postUpdate(uiUpdate{Status: "正在确认 Codex 中文界面…"})
+		localeState, localeErr := waitForChineseLocalization(cdpPort, 15*time.Second)
+		if localeErr == nil && localeState.RestartRequired {
+			diagnosticLog("locale.process_restart", "mode=relay reason=locale_override_updated")
+			postUpdate(uiUpdate{Status: "首次启用完整中文界面，正在自动重启 Codex…"})
+			if err := launchCodex(install); err != nil {
+				stopAPIProxy(proxy)
+				postUpdate(uiUpdate{Error: fmt.Errorf("中文设置已写入，但自动重启 Codex 失败：%w", err), Done: true})
+				return
+			}
+			menuResult = startNativeMenuLocalization()
+			if err := injectIntoCodex(cdpPort, models, defaultModel, func(status string) {
+				postUpdate(uiUpdate{Status: status})
+			}); err != nil {
+				stopAPIProxy(proxy)
+				postUpdate(uiUpdate{Error: fmt.Errorf("Codex 已重启，但重新注入失败：%w", err), Done: true})
+				return
+			}
+			localeState, localeErr = waitForChineseLocalization(cdpPort, 15*time.Second)
+		}
+		if localeErr != nil {
+			diagnosticLog("locale.localization_failed", localeErr.Error())
+		} else {
+			diagnosticLog("locale.ready", fmt.Sprintf("mode=%s official=%t fallback=%t translated=%d visible_zh=%d visible_en=%d", localeState.Mode, localeState.OfficialSetting, localeState.FallbackInstalled, localeState.Translated, localeState.VisibleChinese, localeState.VisibleEnglish))
+		}
 		menuErr := <-menuResult
+		if localeErr != nil {
+			postUpdate(uiUpdate{
+				Status: fmt.Sprintf("模型与图片桥接成功，但中文界面未确认；详情见 %s", diagnosticLogPath()),
+				Models: models,
+				Done:   true,
+			})
+			return
+		}
 		if menuErr != nil {
 			diagnosticLog("menu.localization_failed", menuErr.Error())
 			postUpdate(uiUpdate{
@@ -940,13 +978,50 @@ func startNativeLaunch() {
 			postUpdate(uiUpdate{Error: err, Done: true})
 			return
 		}
-		if err := launchCodexNative(install); err != nil {
+		if err := launchCodex(install); err != nil {
 			postUpdate(uiUpdate{Error: err, Done: true})
+			return
+		}
+		menuResult := startNativeMenuLocalization()
+		if err := injectLocalizationIntoCodex(cdpPort, func(status string) {
+			postUpdate(uiUpdate{Status: status})
+		}); err != nil {
+			postUpdate(uiUpdate{Error: err, Done: true})
+			return
+		}
+		postUpdate(uiUpdate{Status: "正在确认 Codex 中文界面…"})
+		localeState, localeErr := waitForChineseLocalization(cdpPort, 15*time.Second)
+		if localeErr == nil && localeState.RestartRequired {
+			diagnosticLog("locale.process_restart", "mode=official reason=locale_override_updated")
+			postUpdate(uiUpdate{Status: "首次启用完整中文界面，正在自动重启 Codex…"})
+			if err := launchCodex(install); err != nil {
+				postUpdate(uiUpdate{Error: fmt.Errorf("中文设置已写入，但自动重启 Codex 失败：%w", err), Done: true})
+				return
+			}
+			menuResult = startNativeMenuLocalization()
+			if err := injectLocalizationIntoCodex(cdpPort, func(status string) {
+				postUpdate(uiUpdate{Status: status})
+			}); err != nil {
+				postUpdate(uiUpdate{Error: fmt.Errorf("Codex 已重启，但重新注入中文界面失败：%w", err), Done: true})
+				return
+			}
+			localeState, localeErr = waitForChineseLocalization(cdpPort, 15*time.Second)
+		}
+		menuErr := <-menuResult
+		if localeErr != nil {
+			diagnosticLog("locale.native_localization_failed", localeErr.Error())
+			postUpdate(uiUpdate{Status: fmt.Sprintf("官方账号已启动，但中文界面未确认；详情见 %s", diagnosticLogPath()), Done: true})
+			return
+		}
+		diagnosticLog("locale.native_ready", fmt.Sprintf("mode=%s official=%t fallback=%t translated=%d visible_zh=%d visible_en=%d", localeState.Mode, localeState.OfficialSetting, localeState.FallbackInstalled, localeState.Translated, localeState.VisibleChinese, localeState.VisibleEnglish))
+		if menuErr != nil {
+			diagnosticLog("menu.native_localization_failed", menuErr.Error())
+			postUpdate(uiUpdate{Status: fmt.Sprintf("官方账号与中文页面已启动，但原生菜单汉化失败；详情见 %s", diagnosticLogPath()), Done: true})
 			return
 		}
 		diagnosticLog("launch.native_ready", "provider=official")
 		postUpdate(uiUpdate{
-			Status: "已使用官方配置启动 Codex；如未登录，请在官方页面选择 ChatGPT 账号登录。",
+			Status: "已使用官方配置和中文界面启动 Codex；如未登录，请在官方页面选择 ChatGPT 账号登录。",
 			Done:   true,
 		})
 	}()

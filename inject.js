@@ -1,19 +1,36 @@
 (() => {
+  const localizationOnly = window.__YUNQIAO_LOCALIZATION_ONLY__ === true;
+  const bridgeMode = localizationOnly ? "localization" : "relay";
   const incoming = Array.isArray(window.__YUNQIAO_INJECT_MODELS__)
     ? window.__YUNQIAO_INJECT_MODELS__.filter((x) => typeof x === "string" && x.trim()).map((x) => x.trim())
     : [];
   window.__yunqiaoCodexModels = Array.from(new Set(incoming));
   window.__yunqiaoCodexDefaultModel = String(window.__YUNQIAO_INJECT_DEFAULT__ || window.__yunqiaoCodexModels[0] || "");
 
-  if (window.__yunqiaoCodexBridgeInstalled === "1.4.5") {
+  if (window.__yunqiaoCodexBridgeInstalled === "1.4.6" && window.__yunqiaoCodexBridgeMode === bridgeMode) {
     window.__yunqiaoCodexBridgeRefresh?.();
     return;
   }
-  window.__yunqiaoCodexBridgeInstalled = "1.4.5";
+  window.__yunqiaoCodexBridgeInstalled = "1.4.6";
+  window.__yunqiaoCodexBridgeMode = bridgeMode;
 
   function installChineseLocale() {
     const locale = "zh-CN";
     const languages = ["zh-CN", "zh", "en-US", "en"];
+    const localeStatus = window.__yunqiaoChineseLocaleStatus = {
+      installed: true,
+      active: false,
+      officialSetting: false,
+      fallbackInstalled: false,
+      restartRequired: false,
+      translated: 0,
+      mode: "starting",
+      error: "",
+      heartbeat: Date.now(),
+    };
+    const updateLocaleStatus = (next) => {
+      Object.assign(localeStatus, next, { heartbeat: Date.now() });
+    };
     try {
       document.documentElement.lang = locale;
     } catch {
@@ -86,23 +103,193 @@
     });
 
     const localeSyncStarted = Date.now();
+    const localeProcessRestartKey = "yunqiao.locale.process-restart.v1";
     const syncOfficialLocale = async () => {
       try {
         const bridge = await waitForBridge();
         if (!bridge) throw new Error("electron bridge unavailable");
         const response = await callSetting(bridge, "get-setting", { key: "localeOverride" });
-        if ((response?.value ?? null) === locale) return;
-        await callSetting(bridge, "set-setting", { key: "localeOverride", value: locale });
-        const marker = "zh-CN";
-        if (sessionStorage.getItem("yunqiao.locale.reload") !== marker) {
-          sessionStorage.setItem("yunqiao.locale.reload", marker);
-          window.location.reload();
+        if ((response?.value ?? null) === locale) {
+          try {
+            localStorage.removeItem(localeProcessRestartKey);
+          } catch {
+          }
+          updateLocaleStatus({ officialSetting: true, restartRequired: false, mode: localeStatus.fallbackInstalled ? "official+fallback" : "official", error: "" });
+          try {
+            sessionStorage.removeItem("yunqiao.locale.reload");
+          } catch {
+          }
+          return;
         }
-      } catch {
-        if (Date.now() - localeSyncStarted < 60000) setTimeout(syncOfficialLocale, 1500);
+        await callSetting(bridge, "set-setting", { key: "localeOverride", value: locale });
+        try {
+          localStorage.setItem(localeProcessRestartKey, String(Date.now()));
+        } catch {
+        }
+        // Electron chooses its message catalog in the main process. A renderer
+        // reload is not sufficient after changing localeOverride, so let the
+        // launcher perform one clean full-process restart.
+        updateLocaleStatus({ officialSetting: true, restartRequired: true, mode: "official-updated", error: "" });
+      } catch (error) {
+        updateLocaleStatus({ error: String(error?.message || error || "locale setting failed").slice(0, 160) });
+        if (Date.now() - localeSyncStarted < 120000) setTimeout(syncOfficialLocale, 1500);
       }
     };
     void syncOfficialLocale();
+
+    // The official zh-CN catalog is still preferred. This exact-match fallback
+    // only touches application chrome and never translates conversation text,
+    // prompts, editor contents, code, terminals, or model output. It keeps the
+    // launcher useful when the Codex locale/Statsig service initializes late or
+    // is unreachable on the user's network.
+    const uiTranslations = new Map([
+      ["New task", "新建任务"], ["New Task", "新建任务"],
+      ["New chat", "新建对话"], ["New Chat", "新建对话"],
+      ["Start a new task", "开始新任务"], ["Start new task", "开始新任务"],
+      ["Open folder", "打开文件夹"], ["Open Folder", "打开文件夹"],
+      ["Open Folder…", "打开文件夹…"], ["Add folder", "添加文件夹"],
+      ["Choose folder", "选择文件夹"], ["Select folder", "选择文件夹"],
+      ["Recent", "最近"], ["Projects", "项目"], ["Project", "项目"],
+      ["Threads", "对话"], ["Chats", "对话"], ["History", "历史记录"],
+      ["Archived", "已归档"], ["Archive", "归档"], ["Unarchive", "取消归档"],
+      ["Settings", "设置"], ["Settings…", "设置…"], ["General", "常规"],
+      ["Appearance", "外观"], ["Theme", "主题"], ["System", "跟随系统"],
+      ["Light", "浅色"], ["Dark", "深色"], ["Language", "语言"],
+      ["Notifications", "通知"], ["Account", "账户"],
+      ["Sign out", "退出登录"], ["Log out", "退出登录"], ["Log Out", "退出登录"],
+      ["Help", "帮助"], ["About", "关于"],
+      ["Keyboard shortcuts", "键盘快捷键"], ["Keyboard Shortcuts", "键盘快捷键"],
+      ["Check for updates", "检查更新"], ["Check for Updates…", "检查更新…"],
+      ["What's new", "更新内容"], ["Search", "搜索"],
+      ["Search chats", "搜索对话"], ["Search Chats…", "搜索对话…"],
+      ["Search files", "搜索文件"], ["Search Files…", "搜索文件…"],
+      ["Ask anything", "输入任何问题"], ["Describe a task", "描述一个任务"],
+      ["Send", "发送"], ["Stop", "停止"], ["Retry", "重试"],
+      ["Continue", "继续"], ["Cancel", "取消"], ["Save", "保存"],
+      ["Done", "完成"], ["Close", "关闭"], ["Delete", "删除"],
+      ["Rename", "重命名"], ["Pin", "置顶"], ["Unpin", "取消置顶"],
+      ["Copy", "复制"], ["Download", "下载"], ["Open", "打开"],
+      ["Show in Explorer", "在资源管理器中显示"], ["Open in Explorer", "在资源管理器中打开"],
+      ["Terminal", "终端"], ["Files", "文件"], ["Browser", "浏览器"],
+      ["Code", "代码"], ["Review", "审查"], ["Local", "本地"], ["Cloud", "云端"],
+      ["Automations", "自动化"], ["Skills", "技能"],
+      ["Model Context Protocol", "模型上下文协议"], ["Models", "模型"], ["Model", "模型"],
+      ["Reasoning effort", "推理强度"], ["Effort", "推理强度"],
+      ["Low", "低"], ["Medium", "中"], ["High", "高"], ["Extra high", "极高"],
+      ["Workspace", "工作区"], ["Worktree", "工作树"], ["Worktrees", "工作树"],
+      ["Create worktree", "创建工作树"], ["No conversations yet", "暂无对话"],
+      ["Get started", "开始使用"], ["Connect", "连接"], ["Reconnect", "重新连接"],
+      ["Install", "安装"], ["Manage", "管理"], ["Enabled", "已启用"],
+      ["Disabled", "已禁用"], ["On", "开"], ["Off", "关"],
+      ["Default", "默认"], ["Recommended", "推荐"], ["Always", "始终"],
+      ["Never", "从不"], ["Allow", "允许"], ["Deny", "拒绝"],
+      ["Approve", "批准"], ["Submit", "提交"], ["Feedback", "反馈"],
+      ["Loading…", "正在加载…"], ["Loading...", "正在加载..."],
+      ["Working…", "正在处理…"], ["Working...", "正在处理..."],
+      ["Toggle Sidebar", "切换侧边栏"], ["Toggle Bottom Panel", "切换底部面板"],
+      ["Open Terminal", "打开终端"], ["Open Browser Tab", "打开浏览器标签页"],
+      ["Find", "查找"], ["Back", "后退"], ["Forward", "前进"],
+      ["Zoom In", "放大"], ["Zoom Out", "缩小"], ["Actual Size", "实际大小"],
+    ]);
+    const excludedContentSelector = [
+      "[data-testid='conversation-turn']", "[data-testid*='message']", "[data-message-author-role]",
+      "article", "pre", "code", "textarea", "[contenteditable='true']", ".monaco-editor",
+      ".xterm", "[role='textbox']",
+    ].join(",");
+    const uiSurfaceSelector = [
+      "button", "a", "label", "nav", "aside", "header", "main", "[role='menu']",
+      "[role='menuitem']", "[role='tab']", "[role='dialog']", "[role='navigation']",
+      "[data-testid*='sidebar']", "[data-testid*='settings']", "[data-testid*='composer']",
+    ].join(",");
+    let translatedTotal = 0;
+    let fallbackObserver = null;
+    const translatedValue = (raw) => {
+      const value = String(raw || "");
+      const trimmed = value.trim();
+      const translated = uiTranslations.get(trimmed);
+      if (!translated) return null;
+      const start = value.slice(0, value.indexOf(trimmed));
+      const end = value.slice(value.indexOf(trimmed) + trimmed.length);
+      return start + translated + end;
+    };
+    const translateElementAttributes = (element) => {
+      if (!(element instanceof Element) || element.closest(excludedContentSelector)) return 0;
+      let changed = 0;
+      for (const attribute of ["aria-label", "title", "placeholder"]) {
+        if (!element.hasAttribute(attribute)) continue;
+        const translated = translatedValue(element.getAttribute(attribute));
+        if (translated && translated !== element.getAttribute(attribute)) {
+          element.setAttribute(attribute, translated);
+          changed++;
+        }
+      }
+      return changed;
+    };
+    const translateTextNode = (node) => {
+      const parent = node?.parentElement;
+      if (!parent || parent.closest(excludedContentSelector) || !parent.closest(uiSurfaceSelector)) return 0;
+      const translated = translatedValue(node.nodeValue);
+      if (!translated || translated === node.nodeValue) return 0;
+      node.nodeValue = translated;
+      return 1;
+    };
+    const measureVisibleLocale = () => {
+      const root = document.body || document.documentElement;
+      let chinese = 0;
+      let english = 0;
+      if (root) {
+        const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+        let node;
+        while ((node = walker.nextNode())) {
+          const parent = node.parentElement;
+          if (!parent || parent.closest(excludedContentSelector) || !parent.closest(uiSurfaceSelector)) continue;
+          const value = String(node.nodeValue || "").trim();
+          if (!value) continue;
+          if (/[\u3400-\u9fff]/.test(value)) chinese++;
+          if (uiTranslations.has(value)) english++;
+        }
+      }
+      updateLocaleStatus({
+        active: chinese > 0,
+        fallbackInstalled: !!fallbackObserver,
+        translated: translatedTotal,
+        visibleChinese: chinese,
+        visibleEnglish: english,
+        mode: localeStatus.officialSetting ? (translatedTotal > 0 ? "official+fallback" : "official") : "fallback",
+      });
+    };
+    const translateTree = (root) => {
+      if (!root) return 0;
+      if (root.nodeType === Node.TEXT_NODE) return translateTextNode(root);
+      let changed = root instanceof Element ? translateElementAttributes(root) : 0;
+      const owner = root.ownerDocument || document;
+      const walker = owner.createTreeWalker(root, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT);
+      let node;
+      while ((node = walker.nextNode())) {
+        if (node.nodeType === Node.TEXT_NODE) changed += translateTextNode(node);
+        else changed += translateElementAttributes(node);
+      }
+      if (changed) translatedTotal += changed;
+      return changed;
+    };
+    const startFallback = () => {
+      const root = document.body || document.documentElement;
+      if (!root) return setTimeout(startFallback, 50);
+      if (!fallbackObserver) {
+        fallbackObserver = new MutationObserver((records) => {
+          for (const record of records) {
+            for (const node of record.addedNodes || []) translateTree(node);
+            if (record.type === "characterData") translateTextNode(record.target);
+          }
+          measureVisibleLocale();
+        });
+        fallbackObserver.observe(root, { childList: true, subtree: true, characterData: true });
+      }
+      translateTree(root);
+      measureVisibleLocale();
+    };
+    if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", startFallback, { once: true });
+    else startFallback();
 
     const patchI18nConfig = (config) => {
       if (!config || typeof config !== "object") return config;
@@ -171,11 +358,26 @@
     const started = Date.now();
     const timer = setInterval(() => {
       patchI18nRoot(window.__STATSIG__ || globalThis.__STATSIG__);
-      if (Date.now() - started > 60000) clearInterval(timer);
+      updateLocaleStatus({});
+      if (Date.now() - started > 120000) clearInterval(timer);
     }, 100);
+    return measureVisibleLocale;
   }
 
-  installChineseLocale();
+  const refreshChineseLocale = installChineseLocale();
+  if (localizationOnly) {
+    const refreshLocalizationOnly = () => refreshChineseLocale?.();
+    window.__yunqiaoCodexBridgeRefresh = refreshLocalizationOnly;
+    const startLocalizationWatch = () => {
+      const root = document.body || document.documentElement;
+      if (!root) return setTimeout(startLocalizationWatch, 50);
+      new MutationObserver(refreshLocalizationOnly).observe(root, { childList: true, subtree: true });
+      setInterval(refreshLocalizationOnly, 1000);
+      refreshLocalizationOnly();
+    };
+    startLocalizationWatch();
+    return;
+  }
 
   const names = () => Array.isArray(window.__yunqiaoCodexModels) ? window.__yunqiaoCodexModels : [];
   const descriptor = (model, template = null) => {
@@ -847,6 +1049,7 @@
         if (draftImages.length) void associateImages(draftImages, activeKey);
       }
       lastConversationKey = activeKey;
+      refreshChineseLocale?.();
       patchStatsig();
       cleanupSidebarArtifacts();
       void pollProxyImages();
