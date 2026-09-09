@@ -19,6 +19,7 @@ var smartRouterTargets = []string{smartRouteGrok, smartRouteTerra, smartRouteLun
 
 type smartRouteDecision struct {
 	Model     string
+	Effort    string
 	Reason    string
 	TextChars int
 	FileCount int
@@ -26,7 +27,7 @@ type smartRouteDecision struct {
 
 type smartRouteMemory struct {
 	mu     sync.Mutex
-	routes map[string]string
+	routes map[string]smartRouteDecision
 	order  []string
 	limit  int
 }
@@ -35,7 +36,7 @@ func newSmartRouteMemory(limit int) *smartRouteMemory {
 	if limit < 1 {
 		limit = 1
 	}
-	return &smartRouteMemory{routes: make(map[string]string), limit: limit}
+	return &smartRouteMemory{routes: make(map[string]smartRouteDecision), limit: limit}
 }
 
 func (memory *smartRouteMemory) resolve(cacheKey string, decision smartRouteDecision) smartRouteDecision {
@@ -49,15 +50,15 @@ func (memory *smartRouteMemory) resolve(cacheKey string, decision smartRouteDeci
 	// Tool-call continuations can contain only function outputs. Reuse the
 	// session's prior decision so an agent does not switch models mid-turn.
 	if decision.TextChars == 0 && decision.FileCount == 0 {
-		if model := memory.routes[cacheKey]; model != "" {
-			decision.Model, decision.Reason = model, "session_continuation"
+		if previous, exists := memory.routes[cacheKey]; exists && previous.Model != "" {
+			decision.Model, decision.Effort, decision.Reason = previous.Model, previous.Effort, "session_continuation"
 		}
 		return decision
 	}
 	if _, exists := memory.routes[cacheKey]; !exists {
 		memory.order = append(memory.order, cacheKey)
 	}
-	memory.routes[cacheKey] = decision.Model
+	memory.routes[cacheKey] = decision
 	for len(memory.order) > memory.limit {
 		oldest := memory.order[0]
 		memory.order = memory.order[1:]
@@ -96,77 +97,56 @@ func withSmartRouterModel(models []string) []string {
 }
 
 func chooseSmartRoute(input map[string]any) smartRouteDecision {
-	text, fileCount := smartRoutingInput(input["input"])
-	lower := strings.ToLower(text)
-	decision := smartRouteDecision{
-		Model: smartRouteGrok, Reason: "routine_bid_work", TextChars: utf8.RuneCountInString(text), FileCount: fileCount,
-	}
-
-	// Tender work is dominated by inexpensive tool operations. Keep explicit
-	// find/copy/paste/replace/format requests on Grok even when the target file
-	// happens to be a technical proposal or the operation is described as batch.
-	if isRoutineBidFileOperation(lower) {
-		decision.Reason = "routine_file_operation"
-		return decision
-	}
-	if containsRoutingTerm(lower, []string{
-		"extract", "classify", "categorize", "csv", "json", "table", "schema", "field mapping", "batch",
-		"批量", "提取", "分类", "字段", "表格", "格式转换", "结构化", "清单", "去重",
-	}) {
-		decision.Model, decision.Reason = smartRouteLuna, "structured_batch"
-		return decision
-	}
-	if decision.TextChars >= 700000 || fileCount >= 6 || containsRoutingTerm(lower, []string{
-		"all files", "entire folder", "directory", "multiple documents", "cross-document", "long document",
-		"全部文件", "整个文件夹", "文件夹", "多份文档", "跨文档", "交叉分析", "长文档", "综合多份",
-	}) {
-		decision.Model, decision.Reason = smartRouteTerra, "large_multi_document"
-		return decision
-	}
-	// Final compliance and disqualification review is performed by a person.
-	// Sol is therefore reserved for difficult drafting and substantive rewrites,
-	// not merely because a prompt mentions a tender, contract, law or risk.
-	if isComplexBidDrafting(lower) {
-		decision.Model, decision.Reason = smartRouteSol, "complex_bid_drafting"
-		return decision
-	}
+	decision, _ := chooseSmartRouteWithPolicy(input, defaultRoutingPolicy())
 	return decision
 }
 
-func isRoutineBidFileOperation(text string) bool {
-	return containsRoutingTerm(text, []string{
-		"find and replace", "copy and paste", "copy/paste", "replace company name", "replace date",
-		"rename file", "find file", "search files", "locate file", "open file", "format document",
-		"复制粘贴", "复制并粘贴", "查找替换", "查找并替换", "批量替换", "全局替换",
-		"替换公司名称", "修改公司名称", "替换日期", "修改日期", "修改页码", "调整格式",
-		"统一格式", "套用格式", "整理目录", "更新目录", "重命名文件", "查找文件",
-		"搜索文件", "定位文件", "打开文件",
-	})
+func chooseSmartRouteWithPolicy(input map[string]any, policy routingPolicy) (smartRouteDecision, []routingRule) {
+	text, fileCount := smartRoutingInput(input["input"])
+	lower := strings.ToLower(text)
+	decision := smartRouteDecision{
+		Model: policy.Default.Model, Effort: policy.Default.Effort, Reason: "policy_default",
+		TextChars: utf8.RuneCountInString(text), FileCount: fileCount,
+	}
+	matches := matchingRoutingRules(policy.Rules, lower, decision.TextChars, fileCount)
+	if len(matches) > 0 {
+		decision.Model = matches[0].Model
+		decision.Effort = matches[0].Effort
+		decision.Reason = matches[0].Reason
+	}
+	return decision, matches
 }
 
-func isComplexBidDrafting(text string) bool {
-	if containsRoutingTerm(text, []string{
-		"complex rewrite", "substantive rewrite", "scoring point response", "point-by-point response",
-		"复杂改写", "深度重写", "评分点响应", "逐条响应",
-	}) {
+func matchingRoutingRules(rules []routingRule, text string, textChars, fileCount int) []routingRule {
+	matches := make([]routingRule, 0, 4)
+	for _, rule := range rules {
+		if routingRuleMatches(rule, text, textChars, fileCount) {
+			matches = append(matches, rule)
+		}
+	}
+	sort.SliceStable(matches, func(left, right int) bool { return matches[left].Priority > matches[right].Priority })
+	return matches
+}
+
+func routingRuleMatches(rule routingRule, text string, textChars, fileCount int) bool {
+	if rule.MinTextChars > 0 && textChars >= rule.MinTextChars {
 		return true
 	}
-	draftingAction := containsRoutingTerm(text, []string{
-		"draft", "write", "rewrite", "expand", "polish", "optimize", "create",
-		"撰写", "编写", "起草", "重写", "改写", "扩写", "润色", "优化", "生成",
-		"制定", "完善", "制作", "做一份",
-	})
-	draftingSubject := containsRoutingTerm(text, []string{
-		"construction organization design", "technical proposal", "method statement", "implementation plan",
-		"technical response", "project execution plan", "quality assurance plan", "safety plan",
-		"emergency response plan", "scoring criteria", "evaluation criteria", "technical section", "response text",
-		"施工组织设计", "技术方案", "施工方案", "实施方案", "项目实施方案", "技术标",
-		"技术章节", "质量保证措施", "质量保障措施", "安全保证措施", "安全保障措施",
-		"安全文明施工", "环境保护措施", "环保措施", "应急预案", "应急保障措施",
-		"项目重点", "项目难点", "技术难点", "评分标准", "评分办法", "评分细则",
-		"响应内容", "技术内容", "核心章节", "核心段落",
-	})
-	return draftingAction && draftingSubject
+	if rule.MinFileCount > 0 && fileCount >= rule.MinFileCount {
+		return true
+	}
+	if len(rule.MatchAny) > 0 && containsRoutingTerm(text, rule.MatchAny) {
+		return true
+	}
+	if len(rule.MatchAllGroups) > 0 {
+		for _, group := range rule.MatchAllGroups {
+			if len(group) == 0 || !containsRoutingTerm(text, group) {
+				return false
+			}
+		}
+		return true
+	}
+	return false
 }
 
 func smartRoutingInput(value any) (string, int) {

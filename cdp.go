@@ -34,7 +34,7 @@ type cdpTarget struct {
 	WebSocketDebuggerURL string `json:"webSocketDebuggerUrl"`
 }
 
-const rendererBridgeVersion = "1.4.9"
+const rendererBridgeVersion = "1.5.0"
 
 type chineseLocaleState struct {
 	Installed         bool   `json:"installed"`

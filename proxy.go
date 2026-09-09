@@ -47,19 +47,23 @@ func startAPIProxy(rawTarget, apiKey string, logger func(string, string)) (*apiP
 	activity := newRequestActivityTracker()
 	transport := newCompatibilityTransport(http.DefaultTransport, logger)
 	routeMemory := newSmartRouteMemory(256)
+	proxyDone := make(chan struct{})
+	policyManager := newRoutingPolicyManager(routingPolicyURL, routingPolicyCachePath(), logger)
+	smartRouter := newDynamicSmartRouter(policyManager, rawTarget, apiKey, logger)
 	reverse := &httputil.ReverseProxy{
 		FlushInterval: 30 * time.Millisecond,
 		Transport:     transport,
 		Director: func(request *http.Request) {
 			incomingPath := request.URL.Path
-			adaptedPath, protocol := adaptResponsesRequestWithMemory(request, incomingPath, logger, routeMemory)
+			activity.begin(request, "智能路由判定")
+			adaptedPath, protocol := adaptResponsesRequestWithRouter(request, incomingPath, logger, routeMemory, smartRouter)
 			if adaptedPath != "" {
 				incomingPath = adaptedPath
 			}
 			if protocol != "" {
 				request.Header.Set("X-Yunqiao-Protocol", protocol)
 			}
-			activity.begin(request, request.Header.Get("X-Yunqiao-Model"))
+			activity.setModel(requestActivityID(request), request.Header.Get("X-Yunqiao-Model"))
 			targetPath := strings.TrimRight(target.Path, "/")
 			if protocol == "gemini-image" {
 				targetPath = ""
@@ -122,7 +126,10 @@ func startAPIProxy(rawTarget, apiKey string, logger func(string, string)) (*apiP
 	mux.HandleFunc("/yunqiao/health", func(writer http.ResponseWriter, _ *http.Request) {
 		writer.Header().Set("Access-Control-Allow-Origin", "*")
 		writer.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(writer).Encode(map[string]any{"status": "ok", "version": appVersion})
+		policy := policyManager.snapshot()
+		_ = json.NewEncoder(writer).Encode(map[string]any{
+			"status": "ok", "version": appVersion, "routing_policy": policy.PolicyVersion,
+		})
 	})
 	mux.HandleFunc("/yunqiao/activity", activity.serveHTTP)
 	mux.HandleFunc("/yunqiao/images", func(writer http.ResponseWriter, request *http.Request) {
@@ -173,9 +180,10 @@ func startAPIProxy(rawTarget, apiKey string, logger func(string, string)) (*apiP
 		ReadHeaderTimeout: 15 * time.Second,
 	}
 	proxy := &apiProxy{
-		server: server, store: store, activity: activity, done: make(chan struct{}),
+		server: server, store: store, activity: activity, done: proxyDone,
 		startedAt: time.Now().UnixMilli(), logger: logger,
 	}
+	policyManager.start(proxyDone)
 	go func() {
 		if logger != nil {
 			logger("proxy.started", fmt.Sprintf("version=%s target=%s://%s%s", appVersion, target.Scheme, target.Host, target.Path))
