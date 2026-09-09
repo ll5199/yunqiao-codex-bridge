@@ -1,0 +1,158 @@
+{
+  "schema_version": 1,
+  "policy_version": "2026-09-09.1",
+  "refresh_seconds": 300,
+  "default": {
+    "model": "grok-4.6",
+    "effort": "low"
+  },
+  "rules": [
+    {
+      "reason": "routine_file_operation",
+      "model": "grok-4.6",
+      "effort": "low",
+      "priority": 100,
+      "match_any": [
+        "查找替换",
+        "查找并替换",
+        "批量替换",
+        "复制粘贴",
+        "替换公司名称",
+        "修改公司名称",
+        "替换日期",
+        "调整格式",
+        "统一格式",
+        "整理目录",
+        "重命名文件",
+        "查找文件",
+        "搜索文件",
+        "打开文件",
+        "上传文件",
+        "批量上传",
+        "上传网站",
+        "find and replace",
+        "copy and paste",
+        "rename file",
+        "find file",
+        "upload files"
+      ]
+    },
+    {
+      "reason": "structured_batch",
+      "model": "gpt-5.6-luna",
+      "effort": "medium",
+      "priority": 90,
+      "match_any": [
+        "字段提取",
+        "提取字段",
+        "分类整理",
+        "输出表格",
+        "格式转换",
+        "结构化",
+        "生成清单",
+        "去重",
+        "图片识别文字",
+        "图片转文字",
+        "文字识别",
+        "扫描件识别",
+        "field mapping",
+        "extract fields",
+        "categorize",
+        "schema",
+        "ocr"
+      ]
+    },
+    {
+      "reason": "large_multi_document",
+      "model": "gpt-5.6-terra",
+      "effort": "medium",
+      "priority": 80,
+      "min_text_chars": 700000,
+      "min_file_count": 6,
+      "match_any": [
+        "整个文件夹",
+        "全部文件",
+        "多份文档",
+        "跨文档",
+        "交叉分析",
+        "长文档",
+        "综合多份",
+        "entire folder",
+        "multiple documents",
+        "cross-document",
+        "long document"
+      ]
+    },
+    {
+      "reason": "complex_bid_drafting",
+      "model": "gpt-5.6-sol",
+      "effort": "high",
+      "priority": 70,
+      "match_any": [
+        "复杂改写",
+        "深度重写",
+        "评分点响应",
+        "逐条响应",
+        "complex rewrite",
+        "scoring point response"
+      ],
+      "match_all_groups": [
+        [
+          "撰写",
+          "编写",
+          "起草",
+          "重写",
+          "改写",
+          "扩写",
+          "润色",
+          "优化",
+          "生成",
+          "制定",
+          "完善",
+          "draft",
+          "write",
+          "rewrite"
+        ],
+        [
+          "施工组织设计",
+          "技术方案",
+          "施工方案",
+          "实施方案",
+          "技术标",
+          "质量保证措施",
+          "安全保证措施",
+          "应急预案",
+          "项目重点",
+          "项目难点",
+          "评分标准",
+          "响应内容",
+          "technical proposal",
+          "implementation plan",
+          "quality assurance plan",
+          "scoring criteria"
+        ]
+      ]
+    }
+  ],
+  "classifier": {
+    "enabled": true,
+    "model": "gpt-5.6-luna",
+    "effort": "low",
+    "confidence_threshold": 0.75,
+    "timeout_seconds": 8,
+    "max_input_chars": 4000,
+    "low_confidence": {
+      "model": "gpt-5.6-terra",
+      "effort": "medium"
+    }
+  },
+  "ambiguous_distribution": {
+    "enabled": false,
+    "weights": {
+      "grok-4.6": 70,
+      "gpt-5.6-terra": 15,
+      "gpt-5.6-luna": 10,
+      "gpt-5.6-sol": 5
+    }
+  }
+}

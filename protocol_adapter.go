@@ -14,10 +14,14 @@ import (
 const compatibilityBodyLimit = 64 << 20
 
 func adaptResponsesRequest(request *http.Request, path string, logger func(string, string)) (string, string) {
-	return adaptResponsesRequestWithMemory(request, path, logger, nil)
+	return adaptResponsesRequestWithRouter(request, path, logger, nil, nil)
 }
 
 func adaptResponsesRequestWithMemory(request *http.Request, path string, logger func(string, string), memory *smartRouteMemory) (string, string) {
+	return adaptResponsesRequestWithRouter(request, path, logger, memory, nil)
+}
+
+func adaptResponsesRequestWithRouter(request *http.Request, path string, logger func(string, string), memory *smartRouteMemory, router *dynamicSmartRouter) (string, string) {
 	if request.Method != http.MethodPost || !strings.HasSuffix(strings.ToLower(path), "/responses") || request.Body == nil {
 		return path, ""
 	}
@@ -35,11 +39,14 @@ func adaptResponsesRequestWithMemory(request *http.Request, path string, logger 
 	if model == smartRouterModel {
 		request.Header.Set("X-Yunqiao-Smart-Route", "1")
 		decision := chooseSmartRoute(input)
+		if router != nil {
+			decision = router.choose(request.Context(), input)
+		}
 		decision = memory.resolve(stringValue(input["prompt_cache_key"]), decision)
 		input["model"] = decision.Model
-		if smartRouteUsesLowReasoning(decision) {
-			input["reasoning"] = map[string]any{"effort": "low"}
-			request.Header.Set("X-Yunqiao-Reasoning-Effort", "low")
+		if decision.Effort != "" {
+			input["reasoning"] = map[string]any{"effort": decision.Effort}
+			request.Header.Set("X-Yunqiao-Reasoning-Effort", decision.Effort)
 		}
 		encoded, marshalErr := json.Marshal(input)
 		if marshalErr != nil {
@@ -48,8 +55,8 @@ func adaptResponsesRequestWithMemory(request *http.Request, path string, logger 
 		replaceRequestBody(request, encoded)
 		model = decision.Model
 		if logger != nil {
-			logger("router.selected", fmt.Sprintf("model=%s reason=%s text_chars=%d files=%d",
-				safeLogID(model), decision.Reason, decision.TextChars, decision.FileCount))
+			logger("router.selected", fmt.Sprintf("model=%s effort=%s reason=%s text_chars=%d files=%d",
+				safeLogID(model), decision.Effort, decision.Reason, decision.TextChars, decision.FileCount))
 		}
 	}
 	request.Header.Set("X-Yunqiao-Model", model)
@@ -111,11 +118,6 @@ func adaptResponsesRequestWithMemory(request *http.Request, path string, logger 
 		logger("protocol.adapted", fmt.Sprintf("model=%s responses=%s protocol=%s", safeLogID(model), adaptedPath, protocol))
 	}
 	return adaptedPath, protocol
-}
-
-func smartRouteUsesLowReasoning(decision smartRouteDecision) bool {
-	return decision.Model == smartRouteGrok && (decision.Reason == "routine_bid_work" ||
-		decision.Reason == "routine_file_operation" || decision.Reason == "session_continuation")
 }
 
 func replaceRequestBody(request *http.Request, body []byte) {
