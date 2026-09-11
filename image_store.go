@@ -65,10 +65,10 @@ func newPersistentImageStore(root string, logger func(string, string)) *imageSto
 	return store
 }
 
-func (store *imageStore) add(source string) {
+func (store *imageStore) add(source string) bool {
 	source = strings.TrimSpace(source)
 	if source == "" || len(source) > maxCaptureBytes {
-		return
+		return false
 	}
 	sum := sha256.Sum256([]byte(source))
 	id := hex.EncodeToString(sum[:12])
@@ -93,7 +93,7 @@ func (store *imageStore) add(source string) {
 	store.mu.Lock()
 	defer store.mu.Unlock()
 	if store.seen[id] {
-		return
+		return false
 	}
 	store.seen[id] = true
 	store.items = append(store.items, proxyImage{
@@ -109,6 +109,7 @@ func (store *imageStore) add(source string) {
 	if store.logger != nil {
 		store.logger("image.captured", fmt.Sprintf("id=%s bytes=%d persisted=%t", id, len(source), filePath != ""))
 	}
+	return true
 }
 
 func decodeImageSource(source string) (string, []byte, bool) {

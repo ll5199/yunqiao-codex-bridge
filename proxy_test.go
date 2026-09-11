@@ -209,6 +209,68 @@ func TestTransformTextSSEUnchanged(t *testing.T) {
 	}
 }
 
+func TestTransformImageSSEDoesNotAnnounceEmptyImageEvent(t *testing.T) {
+	response := map[string]any{
+		"id": "resp_empty_image", "object": "response", "created_at": 123,
+		"status": "completed", "model": smartRouteGrok,
+		"output": []any{
+			map[string]any{"id": "ig_old", "type": "image_generation_call", "status": "completed"},
+			map[string]any{"id": "tool_1", "type": "custom_tool_call", "call_id": "call_1", "name": "apply_patch", "input": "patch"},
+		},
+	}
+	events := []map[string]any{
+		{"type": "response.output_item.added", "output_index": 0, "item": map[string]any{
+			"id": "ig_old", "type": "image_generation_call", "status": "in_progress",
+		}},
+		{"type": "response.output_item.done", "output_index": 1, "item": response["output"].([]any)[1]},
+		{"type": "response.completed", "response": response},
+	}
+	var upstream strings.Builder
+	for _, event := range events {
+		encoded, _ := json.Marshal(event)
+		upstream.WriteString("event: " + stringValue(event["type"]) + "\n")
+		upstream.WriteString("data: " + string(encoded) + "\n\n")
+	}
+	upstream.WriteString("data: [DONE]\n\n")
+
+	var transformed bytes.Buffer
+	if err := transformImageSSE(strings.NewReader(upstream.String()), &transformed, newImageStore(nil), nil); err != nil {
+		t.Fatal(err)
+	}
+	output := transformed.String()
+	if strings.Contains(output, "图片已生成") {
+		t.Fatalf("empty image event created a false success message:\n%s", output)
+	}
+	if !strings.Contains(output, `"type":"custom_tool_call"`) || !strings.Contains(output, `"type":"response.completed"`) {
+		t.Fatalf("ordinary tool output was not preserved:\n%s", output)
+	}
+}
+
+func TestTransformImageSSEDoesNotAnnouncePreviouslyCapturedImage(t *testing.T) {
+	encoded := base64.StdEncoding.EncodeToString([]byte(strings.Repeat("same-image", 40)))
+	source := "data:image/png;base64," + encoded
+	store := newImageStore(nil)
+	if !store.add(source) {
+		t.Fatal("failed to seed image store")
+	}
+	response := map[string]any{
+		"id": "resp_duplicate_image", "object": "response", "created_at": 123,
+		"status": "completed", "model": "gpt-image-1.5",
+		"output": []any{map[string]any{
+			"id": "ig_duplicate", "type": "image_generation_call", "status": "completed", "result": encoded,
+		}},
+	}
+	completed, _ := json.Marshal(map[string]any{"type": "response.completed", "response": response})
+	upstream := "event: response.completed\ndata: " + string(completed) + "\n\ndata: [DONE]\n\n"
+	var transformed bytes.Buffer
+	if err := transformImageSSE(strings.NewReader(upstream), &transformed, store, nil); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(transformed.String(), "图片已生成") {
+		t.Fatalf("duplicate image created another success message:\n%s", transformed.String())
+	}
+}
+
 func TestPersistentImageDownloadAndConversation(t *testing.T) {
 	root := t.TempDir()
 	store := newPersistentImageStore(root, nil)
