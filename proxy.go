@@ -277,6 +277,7 @@ func (body *imageCompatibleSSEBody) Close() error {
 
 type imageSSEState struct {
 	imageSeen        bool
+	newImageCaptured bool
 	completedEmitted bool
 	responseStarted  bool
 	responseID       string
@@ -320,7 +321,9 @@ func transformImageSSE(source io.Reader, destination io.Writer, store *imageStor
 			state.imageSeen = true
 			state.imageEvents++
 			for _, source := range extractImageSources(event) {
-				store.add(source)
+				if store.add(source) {
+					state.newImageCaptured = true
+				}
 			}
 		}
 
@@ -486,7 +489,11 @@ func writeImageCompletion(destination io.Writer, state *imageSSEState, completed
 			hasMessage = true
 		}
 	}
-	if hasMessage {
+	// A number of upstreams repeat an old or empty image_generation_call in
+	// tool-call continuations. Preserve genuine assistant/tool output, but do
+	// not manufacture another "image generated" assistant message unless this
+	// response actually added a new image to the store.
+	if hasMessage || !state.newImageCaptured {
 		response["output"] = cleaned
 		return writeSSEJSON(destination, "response.completed", map[string]any{
 			"type":     "response.completed",
