@@ -67,9 +67,8 @@ func (memory *smartRouteMemory) resolve(cacheKey string, decision smartRouteDeci
 	return decision
 }
 
-// withSmartRouterModel exposes Auto only when every target needed by the
-// policy exists. This prevents a saved or partially configured provider from
-// advertising a virtual model that it cannot fulfill.
+// withSmartRouterModel exposes Auto when at least one automatic-routing target
+// exists. The runtime router filters unavailable targets before forwarding.
 func withSmartRouterModel(models []string) []string {
 	seen := make(map[string]bool, len(models)+1)
 	result := make([]string, 0, len(models)+1)
@@ -83,11 +82,16 @@ func withSmartRouterModel(models []string) []string {
 			result = append(result, model)
 		}
 	}
+	hasRouteTarget := false
 	for _, model := range smartRouterTargets {
-		if !seen[model] {
-			sort.Strings(result)
-			return result
+		if seen[model] {
+			hasRouteTarget = true
+			break
 		}
+	}
+	if !hasRouteTarget {
+		sort.Strings(result)
+		return result
 	}
 	if !seen[smartRouterModel] {
 		result = append(result, smartRouterModel)

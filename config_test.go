@@ -45,7 +45,7 @@ func TestFetchModelsUsesEnteredKeyAndParsesResponse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(models) != 1 || models[0] != "gpt-5.6-sol" {
+	if len(models) != 2 || models[0] != "gpt-5.6-sol" || models[1] != smartRouterModel {
 		t.Fatalf("unexpected models: %#v", models)
 	}
 }

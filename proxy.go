@@ -33,7 +33,7 @@ type apiProxy struct {
 	logger    func(string, string)
 }
 
-func startAPIProxy(rawTarget, apiKey string, logger func(string, string)) (*apiProxy, error) {
+func startAPIProxy(rawTarget, apiKey string, logger func(string, string), availableModels ...[]string) (*apiProxy, error) {
 	target, err := url.Parse(strings.TrimRight(strings.TrimSpace(rawTarget), "/"))
 	if err != nil || target.Host == "" || (target.Scheme != "https" && target.Scheme != "http") {
 		return nil, errors.New("中转 API 地址无效")
@@ -49,7 +49,7 @@ func startAPIProxy(rawTarget, apiKey string, logger func(string, string)) (*apiP
 	routeMemory := newSmartRouteMemory(256)
 	proxyDone := make(chan struct{})
 	policyManager := newRoutingPolicyManager(routingPolicyURL, routingPolicyCachePath(), logger)
-	smartRouter := newDynamicSmartRouter(policyManager, rawTarget, apiKey, logger)
+	smartRouter := newDynamicSmartRouter(policyManager, rawTarget, apiKey, logger, availableModels...)
 	reverse := &httputil.ReverseProxy{
 		FlushInterval: 30 * time.Millisecond,
 		Transport:     transport,

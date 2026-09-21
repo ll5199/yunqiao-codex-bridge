@@ -17,7 +17,7 @@ import (
 const (
 	defaultBaseURL = "https://api.velyn65.com/v1"
 	providerID     = "yunqiao_bridge"
-	appVersion     = "1.5.1"
+	appVersion     = "1.5.2"
 )
 
 type appConfig struct {
@@ -88,6 +88,12 @@ func fetchModels(baseURL, apiKey string) ([]string, error) {
 		return nil, errors.New("接口连接成功，但没有返回可用模型")
 	}
 	return withSmartRouterModel(models), nil
+}
+
+func fetchModelsWithRemotePolicy(baseURL, apiKey string) (string, []string, error) {
+	baseURL = remoteAPIBaseURL(baseURL)
+	models, err := fetchModels(baseURL, apiKey)
+	return baseURL, models, err
 }
 
 func parseModelsJSON(body []byte) ([]string, error) {
