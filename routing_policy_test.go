@@ -35,7 +35,7 @@ func TestPublishedRoutingPolicyIsValid(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if policy.PolicyVersion != "2026-09-09.1" || !policy.Classifier.Enabled {
+	if policy.PolicyVersion != "2026-09-21.1" || !policy.Classifier.Enabled {
 		t.Fatalf("unexpected published policy: %#v", policy)
 	}
 }
@@ -47,7 +47,7 @@ func TestRoutingPolicyCacheKeepsValidatedPolicy(t *testing.T) {
 		t.Fatal(err)
 	}
 	loaded, err := loadRoutingPolicyCache(path)
-	if err != nil || loaded.PolicyVersion != "builtin-1.5.0" {
+	if err != nil || loaded.PolicyVersion != "builtin-1.5.2" {
 		t.Fatalf("cache did not round trip: policy=%#v err=%v", loaded, err)
 	}
 	before, _ := os.ReadFile(path)

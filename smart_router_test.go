@@ -7,13 +7,16 @@ import (
 
 func TestWithSmartRouterModelRequiresAllTargets(t *testing.T) {
 	partial := withSmartRouterModel([]string{smartRouteGrok, smartRouteTerra, smartRouteSol, smartRouterModel})
-	if containsString(partial, smartRouterModel) {
-		t.Fatalf("Auto was exposed without every route target: %#v", partial)
+	if !containsString(partial, smartRouterModel) {
+		t.Fatalf("Auto should remain available when at least one route target exists: %#v", partial)
 	}
 
 	complete := withSmartRouterModel([]string{smartRouteSol, smartRouteLuna, smartRouteGrok, smartRouteTerra})
 	if !containsString(complete, smartRouterModel) {
 		t.Fatalf("Auto was not exposed for a complete route set: %#v", complete)
+	}
+	if models := withSmartRouterModel([]string{"some-other-model"}); containsString(models, smartRouterModel) {
+		t.Fatalf("Auto was exposed without any route target: %#v", models)
 	}
 }
 

@@ -22,6 +22,9 @@ Bridge 启动后读取一次，此后按 `refresh_seconds` 定期更新。下载
 ## 常用调整
 
 - `default`：没有命中明确规则时的默认执行模型和推理强度。
+- `api_base_url`：上游 API 地址。以后更换中转站只需改这里，API Key 仍由客户端加密保存。
+- `model_settings`：每个模型的 `enabled`、用途 `type` 和默认 `effort`。禁用 Grok 后 Auto
+  仍可使用其他可用模型，不会再因为缺少一个模型而消失。
 - `rules`：关键词、文件数和文本长度规则。`priority` 越大越优先。
 - `classifier`：模糊任务的判断模型。当前使用 Luna `low`，只发送最多 4000 个字符的
   任务说明和附件数量，不发送文件正文。

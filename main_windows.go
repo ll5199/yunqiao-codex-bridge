@@ -803,7 +803,8 @@ func loadSelectedProviderModels() {
 	}
 	setStatus("正在获取" + provider + "分组模型…")
 	go func(provider, key string) {
-		models, err := fetchModels(defaultBaseURL, key)
+		resolvedBaseURL, models, err := fetchModelsWithRemotePolicy(defaultBaseURL, key)
+		_ = resolvedBaseURL
 		if err != nil {
 			postUpdate(uiUpdate{Error: err, Done: true})
 			return
@@ -817,7 +818,8 @@ func startFetch() {
 	apiKey := getText(keyEdit)
 	setBusy(true, "正在连接模型接口…")
 	go func() {
-		models, err := fetchModels(baseURL, apiKey)
+		resolvedBaseURL, models, err := fetchModelsWithRemotePolicy(baseURL, apiKey)
+		baseURL = resolvedBaseURL
 		if err != nil {
 			postUpdate(uiUpdate{Error: err, Done: true})
 			return
@@ -857,11 +859,12 @@ func startSaveAndLaunch() {
 	}
 	setBusy(true, "正在保存配置…")
 	go func() {
+		baseURL = remoteAPIBaseURL(baseURL)
 		models := withSmartRouterModel(currentModels)
 		var err error
 		if len(models) == 0 {
 			postUpdate(uiUpdate{Status: "正在自动获取模型…"})
-			models, err = fetchModels(baseURL, apiKey)
+			baseURL, models, err = fetchModelsWithRemotePolicy(baseURL, apiKey)
 			if err != nil {
 				postUpdate(uiUpdate{Error: err, Done: true})
 				return
@@ -878,7 +881,7 @@ func startSaveAndLaunch() {
 			return
 		}
 		postUpdate(uiUpdate{Status: "正在启动本机 API 代理…", Models: models})
-		proxy, err := replaceAPIProxy(baseURL, apiKey)
+		proxy, err := replaceAPIProxy(baseURL, apiKey, models)
 		if err != nil {
 			postUpdate(uiUpdate{Error: err, Done: true})
 			return
@@ -1456,7 +1459,7 @@ func launchCodexNative(install codexInstallation) error {
 	return nil
 }
 
-func replaceAPIProxy(baseURL, apiKey string) (*apiProxy, error) {
+func replaceAPIProxy(baseURL, apiKey string, availableModels ...[]string) (*apiProxy, error) {
 	proxyMutex.Lock()
 	defer proxyMutex.Unlock()
 	if activeProxy != nil {
@@ -1464,7 +1467,7 @@ func replaceAPIProxy(baseURL, apiKey string) (*apiProxy, error) {
 		activeProxy = nil
 		time.Sleep(150 * time.Millisecond)
 	}
-	proxy, err := startAPIProxy(baseURL, apiKey, diagnosticLog)
+	proxy, err := startAPIProxy(baseURL, apiKey, diagnosticLog, availableModels...)
 	if err != nil {
 		return nil, err
 	}

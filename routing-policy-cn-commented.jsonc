@@ -10,12 +10,27 @@
   // 本次策略版本名称。每次修改正式配置时都必须换成新的值。
   // 推荐格式：年-月-日.当天修改次数，例如 2026-09-09.2。
   // 客户端日志会记录这个值，方便确认新策略是否已经生效。
-  "policy_version": "2026-09-09.1",
+  "policy_version": "2026-09-21.1",
 
   // 客户端自动检查新配置的间隔，单位为秒。
   // 允许范围：60～3600。300 表示每 5 分钟检查一次。
   // 如果想立即生效，可以保存正式配置后重启云桥客户端。
   "refresh_seconds": 300,
+
+  // 上游 API 地址。以后更换中转站，只修改这里即可。
+  // 必须包含 https:// 或 http://，通常填写到 /v1，不要填写 /models。
+  // API Key 仍然保存在客户端加密配置中，不放入此文件。
+  "api_base_url": "https://api.velyn65.com/v1",
+
+  // 每个模型的总开关、中文用途名称和默认推理强度。
+  // enabled=false 后，该模型不会被智能路由选择；修改后重启或等待策略刷新即可。
+  // type 只是模型用途标签；真正的关键词分配仍由下面的 rules 控制。
+  "model_settings": {
+    "grok-4.6": {"enabled": true, "type": "日常文件操作", "effort": "low"},
+    "gpt-5.6-terra": {"enabled": true, "type": "长文档与多文件", "effort": "medium"},
+    "gpt-5.6-luna": {"enabled": true, "type": "结构化与 OCR", "effort": "medium"},
+    "gpt-5.6-sol": {"enabled": true, "type": "复杂标书写作", "effort": "high"}
+  },
 
   // 默认路由：任务没有命中任何明确规则，且智能分类不可用时使用。
   "default": {

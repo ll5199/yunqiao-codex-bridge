@@ -1,7 +1,14 @@
 {
   "schema_version": 1,
-  "policy_version": "2026-09-09.1",
+  "policy_version": "2026-09-21.1",
   "refresh_seconds": 300,
+  "api_base_url": "https://api.velyn65.com/v1",
+  "model_settings": {
+    "grok-4.6": {"enabled": true, "type": "日常文件操作", "effort": "low"},
+    "gpt-5.6-terra": {"enabled": true, "type": "长文档与多文件", "effort": "medium"},
+    "gpt-5.6-luna": {"enabled": true, "type": "结构化与 OCR", "effort": "medium"},
+    "gpt-5.6-sol": {"enabled": true, "type": "复杂标书写作", "effort": "high"}
+  },
   "default": {
     "model": "grok-4.6",
     "effort": "low"

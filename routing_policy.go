@@ -22,6 +22,12 @@ type routingTarget struct {
 	Effort string `json:"effort"`
 }
 
+type routingModelSettings struct {
+	Enabled bool   `json:"enabled"`
+	Type    string `json:"type"`
+	Effort  string `json:"effort"`
+}
+
 type routingRule struct {
 	Reason         string     `json:"reason"`
 	Model          string     `json:"model"`
@@ -49,18 +55,27 @@ type routingDistributionPolicy struct {
 }
 
 type routingPolicy struct {
-	SchemaVersion  int                       `json:"schema_version"`
-	PolicyVersion  string                    `json:"policy_version"`
-	RefreshSeconds int                       `json:"refresh_seconds"`
-	Default        routingTarget             `json:"default"`
-	Rules          []routingRule             `json:"rules"`
-	Classifier     routingClassifierPolicy   `json:"classifier"`
-	Distribution   routingDistributionPolicy `json:"ambiguous_distribution"`
+	SchemaVersion  int                             `json:"schema_version"`
+	PolicyVersion  string                          `json:"policy_version"`
+	RefreshSeconds int                             `json:"refresh_seconds"`
+	APIBaseURL     string                          `json:"api_base_url"`
+	ModelSettings  map[string]routingModelSettings `json:"model_settings"`
+	Default        routingTarget                   `json:"default"`
+	Rules          []routingRule                   `json:"rules"`
+	Classifier     routingClassifierPolicy         `json:"classifier"`
+	Distribution   routingDistributionPolicy       `json:"ambiguous_distribution"`
 }
 
 func defaultRoutingPolicy() routingPolicy {
 	return routingPolicy{
-		SchemaVersion: 1, PolicyVersion: "builtin-1.5.0", RefreshSeconds: 300,
+		SchemaVersion: 1, PolicyVersion: "builtin-1.5.2", RefreshSeconds: 300,
+		APIBaseURL: defaultBaseURL,
+		ModelSettings: map[string]routingModelSettings{
+			smartRouteGrok:  {Enabled: true, Type: "日常文件操作", Effort: "low"},
+			smartRouteTerra: {Enabled: true, Type: "长文档与多文件", Effort: "medium"},
+			smartRouteLuna:  {Enabled: true, Type: "结构化与 OCR", Effort: "medium"},
+			smartRouteSol:   {Enabled: true, Type: "复杂标书写作", Effort: "high"},
+		},
 		Default: routingTarget{Model: smartRouteGrok, Effort: "low"},
 		Rules: []routingRule{
 			{
@@ -158,6 +173,32 @@ func validateRoutingPolicy(policy *routingPolicy) error {
 	}
 	if policy.RefreshSeconds < 60 || policy.RefreshSeconds > 3600 {
 		return errors.New("refresh_seconds 必须在 60 到 3600 之间")
+	}
+	if strings.TrimSpace(policy.APIBaseURL) != "" {
+		base, err := normalizeBaseURL(policy.APIBaseURL)
+		if err != nil {
+			return fmt.Errorf("api_base_url 无效：%w", err)
+		}
+		policy.APIBaseURL = base
+	}
+	for model, settings := range policy.ModelSettings {
+		if !isSmartRouterTarget(model) {
+			return fmt.Errorf("model_settings 包含不允许的模型 %q", model)
+		}
+		settings.Type = strings.TrimSpace(settings.Type)
+		if settings.Type == "" || len([]rune(settings.Type)) > 80 {
+			return fmt.Errorf("model_settings[%q].type 无效", model)
+		}
+		if settings.Effort == "" {
+			settings.Effort = effortForModel(defaultRoutingPolicy(), model)
+		}
+		if settings.Effort != "low" && settings.Effort != "medium" && settings.Effort != "high" && settings.Effort != "xhigh" {
+			return fmt.Errorf("model_settings[%q].effort 无效", model)
+		}
+		if settings.Effort == "xhigh" && model != smartRouteGrok {
+			return fmt.Errorf("model_settings[%q] 只有 Grok 可以使用 xhigh", model)
+		}
+		policy.ModelSettings[model] = settings
 	}
 	if err := validateRoutingTarget("default", &policy.Default); err != nil {
 		return err
@@ -291,6 +332,16 @@ func fetchRoutingPolicy(client *http.Client, endpoint string) (routingPolicy, []
 		return routingPolicy{}, nil, err
 	}
 	return policy, body, nil
+}
+
+// remoteAPIBaseURL returns the server-controlled upstream address. The local
+// address remains the fallback when the policy endpoint is unavailable.
+func remoteAPIBaseURL(fallback string) string {
+	policy, _, err := fetchRoutingPolicy(&http.Client{Timeout: 4 * time.Second}, routingPolicyURL)
+	if err != nil || strings.TrimSpace(policy.APIBaseURL) == "" {
+		return fallback
+	}
+	return policy.APIBaseURL
 }
 
 func routingPolicyCachePath() string {

@@ -16,11 +16,12 @@ import (
 )
 
 type dynamicSmartRouter struct {
-	manager *routingPolicyManager
-	client  *http.Client
-	baseURL string
-	apiKey  string
-	logger  func(string, string)
+	manager   *routingPolicyManager
+	client    *http.Client
+	baseURL   string
+	apiKey    string
+	available map[string]bool
+	logger    func(string, string)
 }
 
 type classifierResult struct {
@@ -31,14 +32,24 @@ type classifierResult struct {
 	Reason     string  `json:"reason"`
 }
 
-func newDynamicSmartRouter(manager *routingPolicyManager, rawTarget, apiKey string, logger func(string, string)) *dynamicSmartRouter {
-	return &dynamicSmartRouter{
+func newDynamicSmartRouter(manager *routingPolicyManager, rawTarget, apiKey string, logger func(string, string), availableModels ...[]string) *dynamicSmartRouter {
+	router := &dynamicSmartRouter{
 		manager: manager,
 		client:  &http.Client{Timeout: 15 * time.Second},
 		baseURL: strings.TrimRight(strings.TrimSpace(rawTarget), "/"),
 		apiKey:  strings.TrimSpace(apiKey),
 		logger:  logger,
 	}
+	if len(availableModels) > 0 {
+		router.available = make(map[string]bool)
+		for _, model := range availableModels[0] {
+			model = strings.TrimSpace(model)
+			if isSmartRouterTarget(model) {
+				router.available[model] = true
+			}
+		}
+	}
+	return router
 }
 
 func (router *dynamicSmartRouter) choose(ctx context.Context, input map[string]any) smartRouteDecision {
@@ -47,6 +58,7 @@ func (router *dynamicSmartRouter) choose(ctx context.Context, input map[string]a
 		policy = router.manager.snapshot()
 	}
 	decision, matches := chooseSmartRouteWithPolicy(input, policy)
+	decision, matches = router.filterUnavailableDecision(decision, matches, policy)
 	text, fileCount := smartRoutingInput(input["input"])
 	if strings.TrimSpace(text) == "" && fileCount == 0 {
 		return decision
@@ -72,6 +84,11 @@ func (router *dynamicSmartRouter) choose(ctx context.Context, input map[string]a
 		decision.Model = policy.Classifier.LowConfidence.Model
 		decision.Effort = policy.Classifier.LowConfidence.Effort
 		decision.Reason = "classifier_low_confidence"
+		decision, _ = router.filterUnavailableDecision(decision, nil, policy)
+		return decision
+	}
+	if router.hasAvailabilityList() && (!router.available[result.Model] || !policy.ModelSettings[result.Model].Enabled && policy.ModelSettings[result.Model].ModelIsConfigured()) {
+		router.log("router.classifier_unavailable", "model="+safeLogID(result.Model))
 		return decision
 	}
 	decision.Model = result.Model
@@ -83,6 +100,69 @@ func (router *dynamicSmartRouter) choose(ctx context.Context, input map[string]a
 		result.Confidence, safeClassifierLabel(result.TaskType), len(matches),
 	))
 	return decision
+}
+
+func (settings routingModelSettings) ModelIsConfigured() bool {
+	return settings.Type != "" || settings.Effort != ""
+}
+
+func (router *dynamicSmartRouter) hasAvailabilityList() bool {
+	return router != nil && router.available != nil
+}
+
+func (router *dynamicSmartRouter) modelAvailable(model string, policy routingPolicy) bool {
+	if !router.hasAvailabilityList() {
+		return true
+	}
+	if !router.available[model] {
+		return false
+	}
+	if settings, ok := policy.ModelSettings[model]; ok && settings.ModelIsConfigured() && !settings.Enabled {
+		return false
+	}
+	return true
+}
+
+func (router *dynamicSmartRouter) filterUnavailableDecision(decision smartRouteDecision, matches []routingRule, policy routingPolicy) (smartRouteDecision, []routingRule) {
+	if !router.hasAvailabilityList() {
+		return decision, matches
+	}
+	availableMatches := make([]routingRule, 0, len(matches))
+	for _, rule := range matches {
+		if router.modelAvailable(rule.Model, policy) {
+			availableMatches = append(availableMatches, rule)
+		}
+	}
+	if router.modelAvailable(decision.Model, policy) {
+		return decision, availableMatches
+	}
+	if len(availableMatches) > 0 {
+		selected := availableMatches[0]
+		decision.Model, decision.Effort, decision.Reason = selected.Model, selected.Effort, selected.Reason
+		return decision, availableMatches
+	}
+	for _, model := range smartRouterTargets {
+		if router.modelAvailable(model, policy) {
+			decision.Model = model
+			decision.Effort = effortForModel(policy, model)
+			decision.Reason = "available_model_fallback"
+			return decision, availableMatches
+		}
+	}
+	return decision, availableMatches
+}
+
+func (router *dynamicSmartRouter) availableModelNames() []string {
+	if !router.hasAvailabilityList() {
+		return append([]string(nil), smartRouterTargets...)
+	}
+	result := make([]string, 0, len(smartRouterTargets))
+	for _, model := range smartRouterTargets {
+		if router.available[model] {
+			result = append(result, model)
+		}
+	}
+	return result
 }
 
 func (router *dynamicSmartRouter) classify(parent context.Context, input map[string]any, policy routingPolicy, matches []routingRule) (classifierResult, error) {
@@ -101,13 +181,13 @@ func (router *dynamicSmartRouter) classify(parent context.Context, input map[str
 	}
 	sort.Strings(weights)
 	requestText := fmt.Sprintf(
-		"用户任务：\n%s\n\n元数据：文字字符数=%d，附件数=%d，规则候选=%s，业务倾向权重=%s",
-		text, len([]rune(text)), fileCount, strings.Join(matchNames, ","), strings.Join(weights, ","),
+		"用户任务：\n%s\n\n元数据：文字字符数=%d，附件数=%d，规则候选=%s，可用模型=%s，业务倾向权重=%s",
+		text, len([]rune(text)), fileCount, strings.Join(matchNames, ","), strings.Join(router.availableModelNames(), ","), strings.Join(weights, ","),
 	)
 	instructions := "你是云桥 Codex 的任务路由器。只判断应由哪个模型执行，不执行任务本身。" +
 		"可选模型：grok-4.6 负责查找、修改、复制粘贴、上传和普通操作；gpt-5.6-luna 负责字段提取、表格、清单和结构化；" +
 		"gpt-5.6-terra 负责大量文件、OCR、跨文档和长上下文；gpt-5.6-sol 负责施工组织设计、复杂技术方案和深度重写。" +
-		"权重只在多个模型同样适合时作为偏好，不能让不适合的模型承担任务。" +
+		"只能从可用模型中选择；缺少某个模型时不要返回它。权重只在多个模型同样适合时作为偏好，不能让不适合的模型承担任务。" +
 		"仅返回 JSON：{\"task_type\":\"简短英文分类\",\"model\":\"模型名\",\"effort\":\"low|medium|high\",\"confidence\":0到1,\"reason\":\"简短中文原因\"}。"
 	payload, err := json.Marshal(map[string]any{
 		"model":             policy.Classifier.Model,
@@ -277,6 +357,9 @@ func weightedRoutingDecision(input map[string]any, policy routingPolicy, fallbac
 }
 
 func effortForModel(policy routingPolicy, model string) string {
+	if settings, ok := policy.ModelSettings[model]; ok && settings.Effort != "" {
+		return settings.Effort
+	}
 	for _, rule := range policy.Rules {
 		if rule.Model == model {
 			return rule.Effort
