@@ -15,8 +15,8 @@ func TestWithSmartRouterModelRequiresAllTargets(t *testing.T) {
 	if !containsString(complete, smartRouterModel) {
 		t.Fatalf("Auto was not exposed for a complete route set: %#v", complete)
 	}
-	if models := withSmartRouterModel([]string{"some-other-model"}); containsString(models, smartRouterModel) {
-		t.Fatalf("Auto was exposed without any route target: %#v", models)
+	if models := withSmartRouterModel([]string{"some-other-model"}); !containsString(models, smartRouterModel) {
+		t.Fatalf("Auto was not exposed for a dynamic model pool: %#v", models)
 	}
 }
 

@@ -35,7 +35,7 @@ func TestPublishedRoutingPolicyIsValid(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if policy.PolicyVersion != "2026-09-21.1" || !policy.Classifier.Enabled {
+	if policy.PolicyVersion != "2026-09-23.8" || !policy.Classifier.Enabled || !policy.Distribution.Enabled {
 		t.Fatalf("unexpected published policy: %#v", policy)
 	}
 }
@@ -47,7 +47,7 @@ func TestRoutingPolicyCacheKeepsValidatedPolicy(t *testing.T) {
 		t.Fatal(err)
 	}
 	loaded, err := loadRoutingPolicyCache(path)
-	if err != nil || loaded.PolicyVersion != "builtin-1.5.2" {
+	if err != nil || loaded.PolicyVersion != "builtin-1.5.8" {
 		t.Fatalf("cache did not round trip: policy=%#v err=%v", loaded, err)
 	}
 	before, _ := os.ReadFile(path)
@@ -96,9 +96,44 @@ func TestDynamicRouterLowConfidenceUsesConfiguredFallback(t *testing.T) {
 func TestWeightedRoutingIsSticky(t *testing.T) {
 	policy := defaultRoutingPolicy()
 	policy.Distribution.Enabled = true
-	first := weightedRoutingDecision(map[string]any{"input": "任务", "prompt_cache_key": "thread-42"}, policy, smartRouteDecision{})
-	second := weightedRoutingDecision(map[string]any{"input": "不同文字", "prompt_cache_key": "thread-42"}, policy, smartRouteDecision{})
+	router := newDynamicSmartRouter(nil, "", "", nil, []string{smartRouteGrok, smartRouteTerra, smartRouteLuna, smartRouteSol})
+	first := router.weightedRoutingDecision(map[string]any{"input": "任务", "prompt_cache_key": "thread-42"}, policy, smartRouteDecision{})
+	second := router.weightedRoutingDecision(map[string]any{"input": "不同文字", "prompt_cache_key": "thread-42"}, policy, smartRouteDecision{})
 	if first.Model == "" || first.Model != second.Model || first.Effort != second.Effort {
 		t.Fatalf("weighted route was not sticky: first=%#v second=%#v", first, second)
+	}
+}
+
+func TestWeightedRoutingFollowsLiveModels(t *testing.T) {
+	policy := defaultRoutingPolicy()
+	policy.Distribution.Enabled = true
+	policy.Distribution.Weights = map[string]int{"gpt-6-luna": 90, "gpt-6-sol": 10}
+	policy.ModelSettings = map[string]routingModelSettings{
+		"gpt-6-luna": {Enabled: true, Type: "文档", Effort: "high"},
+		"gpt-6-sol":  {Enabled: true, Type: "复杂任务", Effort: "high"},
+	}
+	request := map[string]any{"input": "不确定的任务", "prompt_cache_key": "same-session"}
+	defaultDecision := smartRouteDecision{Model: "gpt-6-luna", Effort: "high", Reason: "policy_default"}
+
+	// Removing a model must renormalize the remaining weights, regardless of its configured weight.
+	router := newDynamicSmartRouter(nil, "", "", nil, []string{"gpt-6-sol", "new-model"})
+	decision := router.weightedRoutingDecision(request, policy, defaultDecision)
+	if decision.Model != "gpt-6-sol" || decision.Reason != "ambiguous_distribution" {
+		t.Fatalf("deleted model or unweighted new model joined the draw: %#v", decision)
+	}
+
+	// Newly configured live models participate without a client update.
+	policy.Distribution.Weights["new-model"] = 100
+	policy.ModelSettings["gpt-6-sol"] = routingModelSettings{Enabled: false, Type: "复杂任务", Effort: "high"}
+	decision = router.weightedRoutingDecision(request, policy, defaultDecision)
+	if decision.Model != "new-model" || decision.Reason != "ambiguous_distribution" {
+		t.Fatalf("newly weighted model was not selected: %#v", decision)
+	}
+
+	// If no weighted model is available, preserve the already filtered fallback.
+	policy.Distribution.Weights = map[string]int{"gpt-6-luna": 100}
+	decision = router.weightedRoutingDecision(request, policy, defaultDecision)
+	if decision != defaultDecision {
+		t.Fatalf("missing weights replaced the safe fallback: %#v", decision)
 	}
 }

@@ -44,7 +44,7 @@ func newDynamicSmartRouter(manager *routingPolicyManager, rawTarget, apiKey stri
 		router.available = make(map[string]bool)
 		for _, model := range availableModels[0] {
 			model = strings.TrimSpace(model)
-			if isSmartRouterTarget(model) {
+			if model != "" {
 				router.available[model] = true
 			}
 		}
@@ -71,18 +71,18 @@ func (router *dynamicSmartRouter) choose(ctx context.Context, input map[string]a
 	if err != nil {
 		router.log("router.classifier_failed", "policy="+safeLogID(policy.PolicyVersion)+" error="+err.Error())
 		if len(matches) == 0 && policy.Distribution.Enabled {
-			return weightedRoutingDecision(input, policy, decision)
+			return router.weightedRoutingDecision(input, policy, decision)
 		}
 		return decision
 	}
 	if result.Confidence < policy.Classifier.ConfidenceThreshold {
 		if policy.Distribution.Enabled {
-			fallback := weightedRoutingDecision(input, policy, decision)
-			fallback.Reason = "ambiguous_distribution"
-			return fallback
+			return router.weightedRoutingDecision(input, policy, decision)
 		}
-		decision.Model = policy.Classifier.LowConfidence.Model
-		decision.Effort = policy.Classifier.LowConfidence.Effort
+		if policy.Classifier.LowConfidence.Model != "" {
+			decision.Model = policy.Classifier.LowConfidence.Model
+			decision.Effort = policy.Classifier.LowConfidence.Effort
+		}
 		decision.Reason = "classifier_low_confidence"
 		decision, _ = router.filterUnavailableDecision(decision, nil, policy)
 		return decision
@@ -93,6 +93,9 @@ func (router *dynamicSmartRouter) choose(ctx context.Context, input map[string]a
 	}
 	decision.Model = result.Model
 	decision.Effort = result.Effort
+	if settings, ok := policy.ModelSettings[result.Model]; ok && settings.Effort != "" {
+		decision.Effort = settings.Effort
+	}
 	decision.Reason = "classifier"
 	router.log("router.classifier_selected", fmt.Sprintf(
 		"policy=%s model=%s effort=%s confidence=%.2f task_type=%s matches=%d",
@@ -141,7 +144,7 @@ func (router *dynamicSmartRouter) filterUnavailableDecision(decision smartRouteD
 		decision.Model, decision.Effort, decision.Reason = selected.Model, selected.Effort, selected.Reason
 		return decision, availableMatches
 	}
-	for _, model := range smartRouterTargets {
+	for _, model := range router.availableModelNames() {
 		if router.modelAvailable(model, policy) {
 			decision.Model = model
 			decision.Effort = effortForModel(policy, model)
@@ -156,12 +159,11 @@ func (router *dynamicSmartRouter) availableModelNames() []string {
 	if !router.hasAvailabilityList() {
 		return append([]string(nil), smartRouterTargets...)
 	}
-	result := make([]string, 0, len(smartRouterTargets))
-	for _, model := range smartRouterTargets {
-		if router.available[model] {
-			result = append(result, model)
-		}
+	result := make([]string, 0, len(router.available))
+	for model := range router.available {
+		result = append(result, model)
 	}
+	sort.Strings(result)
 	return result
 }
 
@@ -184,10 +186,17 @@ func (router *dynamicSmartRouter) classify(parent context.Context, input map[str
 		"用户任务：\n%s\n\n元数据：文字字符数=%d，附件数=%d，规则候选=%s，可用模型=%s，业务倾向权重=%s",
 		text, len([]rune(text)), fileCount, strings.Join(matchNames, ","), strings.Join(router.availableModelNames(), ","), strings.Join(weights, ","),
 	)
+	capabilities := make([]string, 0, len(policy.ModelSettings))
+	for model, settings := range policy.ModelSettings {
+		if router.modelAvailable(model, policy) {
+			capabilities = append(capabilities, fmt.Sprintf("%s=%s(强度%s)", model, settings.Type, settings.Effort))
+		}
+	}
+	sort.Strings(capabilities)
 	instructions := "你是云桥 Codex 的任务路由器。只判断应由哪个模型执行，不执行任务本身。" +
-		"可选模型：grok-4.6 负责查找、修改、复制粘贴、上传和普通操作；gpt-5.6-luna 负责字段提取、表格、清单和结构化；" +
-		"gpt-5.6-terra 负责大量文件、OCR、跨文档和长上下文；gpt-5.6-sol 负责施工组织设计、复杂技术方案和深度重写。" +
-		"只能从可用模型中选择；缺少某个模型时不要返回它。权重只在多个模型同样适合时作为偏好，不能让不适合的模型承担任务。" +
+		"必须根据任务内容、模型名称和用途说明判断，只能从请求中的实时可用模型列表选择，列表外模型绝对不能返回。" +
+		"已配置模型用途：" + strings.Join(capabilities, "；") + "。" +
+		"权重只在多个模型同样适合时作为偏好，不能让不适合的模型承担任务。" +
 		"仅返回 JSON：{\"task_type\":\"简短英文分类\",\"model\":\"模型名\",\"effort\":\"low|medium|high\",\"confidence\":0到1,\"reason\":\"简短中文原因\"}。"
 	payload, err := json.Marshal(map[string]any{
 		"model":             policy.Classifier.Model,
@@ -232,14 +241,12 @@ func (router *dynamicSmartRouter) classify(parent context.Context, input map[str
 	if err != nil {
 		return classifierResult{}, err
 	}
-	if !isSmartRouterTarget(result.Model) {
+	if !isSmartRouterTarget(result.Model) && !router.modelAvailable(result.Model, policy) {
 		return classifierResult{}, fmt.Errorf("分类器返回了不允许的模型 %q", result.Model)
 	}
-	target := routingTarget{Model: result.Model, Effort: result.Effort}
-	if err := validateRoutingTarget("classifier.result", &target); err != nil {
-		return classifierResult{}, err
+	if !validRoutingEffort(result.Effort) {
+		return classifierResult{}, errors.New("分类器返回了无效推理强度")
 	}
-	result.Model, result.Effort = target.Model, target.Effort
 	if result.Confidence < 0 || result.Confidence > 1 {
 		return classifierResult{}, errors.New("分类器 confidence 不在 0 到 1 之间")
 	}
@@ -323,16 +330,19 @@ func safeClassifierLabel(value string) string {
 	return result.String()
 }
 
-func weightedRoutingDecision(input map[string]any, policy routingPolicy, fallback smartRouteDecision) smartRouteDecision {
+func (router *dynamicSmartRouter) weightedRoutingDecision(input map[string]any, policy routingPolicy, fallback smartRouteDecision) smartRouteDecision {
+	models := make([]string, 0, len(policy.Distribution.Weights))
 	total := 0
-	for _, model := range smartRouterTargets {
-		if weight := policy.Distribution.Weights[model]; weight > 0 {
+	for model, weight := range policy.Distribution.Weights {
+		if weight > 0 && router.modelAvailable(model, policy) {
+			models = append(models, model)
 			total += weight
 		}
 	}
 	if total == 0 {
 		return fallback
 	}
+	sort.Strings(models)
 	text, _ := smartRoutingInput(input["input"])
 	key := strings.TrimSpace(stringValue(input["prompt_cache_key"]))
 	if key == "" {
@@ -340,7 +350,7 @@ func weightedRoutingDecision(input map[string]any, policy routingPolicy, fallbac
 	}
 	sum := sha256.Sum256([]byte(key))
 	bucket := int(binary.BigEndian.Uint64(sum[:8]) % uint64(total))
-	for _, model := range smartRouterTargets {
+	for _, model := range models {
 		weight := policy.Distribution.Weights[model]
 		if weight <= 0 {
 			continue

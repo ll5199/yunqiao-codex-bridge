@@ -54,12 +54,22 @@ type routingDistributionPolicy struct {
 	Weights map[string]int `json:"weights"`
 }
 
+type smartRoutingPolicy struct {
+	Enabled       bool   `json:"enabled"`
+	RouterModel   string `json:"router_model"`
+	RouterEffort  string `json:"router_effort"`
+	ExecuteEffort string `json:"execute_effort"`
+	TimeoutMS     int    `json:"router_timeout_ms"`
+	Fallback      string `json:"fallback"`
+}
+
 type routingPolicy struct {
 	SchemaVersion  int                             `json:"schema_version"`
 	PolicyVersion  string                          `json:"policy_version"`
 	RefreshSeconds int                             `json:"refresh_seconds"`
 	APIBaseURL     string                          `json:"api_base_url"`
 	ModelSettings  map[string]routingModelSettings `json:"model_settings"`
+	SmartRouting   smartRoutingPolicy              `json:"smart_routing"`
 	Default        routingTarget                   `json:"default"`
 	Rules          []routingRule                   `json:"rules"`
 	Classifier     routingClassifierPolicy         `json:"classifier"`
@@ -68,7 +78,7 @@ type routingPolicy struct {
 
 func defaultRoutingPolicy() routingPolicy {
 	return routingPolicy{
-		SchemaVersion: 1, PolicyVersion: "builtin-1.5.2", RefreshSeconds: 300,
+		SchemaVersion: 1, PolicyVersion: "builtin-1.5.8", RefreshSeconds: 300,
 		APIBaseURL: defaultBaseURL,
 		ModelSettings: map[string]routingModelSettings{
 			smartRouteGrok:  {Enabled: true, Type: "日常文件操作", Effort: "low"},
@@ -76,7 +86,8 @@ func defaultRoutingPolicy() routingPolicy {
 			smartRouteLuna:  {Enabled: true, Type: "结构化与 OCR", Effort: "medium"},
 			smartRouteSol:   {Enabled: true, Type: "复杂标书写作", Effort: "high"},
 		},
-		Default: routingTarget{Model: smartRouteGrok, Effort: "low"},
+		SmartRouting: smartRoutingPolicy{Enabled: true, RouterModel: smartRouteSol, RouterEffort: "low", ExecuteEffort: "low", TimeoutMS: 3000, Fallback: "available_model"},
+		Default:      routingTarget{Model: smartRouteGrok, Effort: "low"},
 		Rules: []routingRule{
 			{
 				Reason: "routine_file_operation", Model: smartRouteGrok, Effort: "low", Priority: 100,
@@ -182,8 +193,8 @@ func validateRoutingPolicy(policy *routingPolicy) error {
 		policy.APIBaseURL = base
 	}
 	for model, settings := range policy.ModelSettings {
-		if !isSmartRouterTarget(model) {
-			return fmt.Errorf("model_settings 包含不允许的模型 %q", model)
+		if !validRoutingModel(model) {
+			return fmt.Errorf("model_settings 包含无效模型 %q", model)
 		}
 		settings.Type = strings.TrimSpace(settings.Type)
 		if settings.Type == "" || len([]rune(settings.Type)) > 80 {
@@ -192,19 +203,18 @@ func validateRoutingPolicy(policy *routingPolicy) error {
 		if settings.Effort == "" {
 			settings.Effort = effortForModel(defaultRoutingPolicy(), model)
 		}
-		if settings.Effort != "low" && settings.Effort != "medium" && settings.Effort != "high" && settings.Effort != "xhigh" {
+		if !validRoutingEffort(settings.Effort) {
 			return fmt.Errorf("model_settings[%q].effort 无效", model)
-		}
-		if settings.Effort == "xhigh" && model != smartRouteGrok {
-			return fmt.Errorf("model_settings[%q] 只有 Grok 可以使用 xhigh", model)
 		}
 		policy.ModelSettings[model] = settings
 	}
-	if err := validateRoutingTarget("default", &policy.Default); err != nil {
-		return err
+	if strings.TrimSpace(policy.Default.Model) != "" {
+		if err := validateRoutingTarget("default", &policy.Default); err != nil {
+			return err
+		}
 	}
-	if len(policy.Rules) == 0 || len(policy.Rules) > 32 {
-		return errors.New("rules 数量必须在 1 到 32 之间")
+	if len(policy.Rules) > 32 {
+		return errors.New("rules 数量不能超过 32")
 	}
 	seenReasons := make(map[string]bool)
 	termCount := 0
@@ -256,8 +266,10 @@ func validateRoutingPolicy(policy *routingPolicy) error {
 			return err
 		}
 		policy.Classifier.Model, policy.Classifier.Effort = target.Model, target.Effort
-		if err := validateRoutingTarget("classifier.low_confidence", &policy.Classifier.LowConfidence); err != nil {
-			return err
+		if strings.TrimSpace(policy.Classifier.LowConfidence.Model) != "" {
+			if err := validateRoutingTarget("classifier.low_confidence", &policy.Classifier.LowConfidence); err != nil {
+				return err
+			}
 		}
 		if policy.Classifier.ConfidenceThreshold < 0.5 || policy.Classifier.ConfidenceThreshold > 0.99 {
 			return errors.New("classifier.confidence_threshold 必须在 0.5 到 0.99 之间")
@@ -272,7 +284,7 @@ func validateRoutingPolicy(policy *routingPolicy) error {
 	if len(policy.Distribution.Weights) > 0 {
 		total := 0
 		for model, weight := range policy.Distribution.Weights {
-			if !isSmartRouterTarget(model) || weight < 0 || weight > 10000 {
+			if !validRoutingModel(model) || weight < 0 || weight > 10000 {
 				return fmt.Errorf("ambiguous_distribution.weights[%q] 无效", model)
 			}
 			total += weight
@@ -287,16 +299,23 @@ func validateRoutingPolicy(policy *routingPolicy) error {
 func validateRoutingTarget(name string, target *routingTarget) error {
 	target.Model = strings.TrimSpace(target.Model)
 	target.Effort = strings.ToLower(strings.TrimSpace(target.Effort))
-	if !isSmartRouterTarget(target.Model) {
-		return fmt.Errorf("%s.model 不在允许的智能路由模型中", name)
+	if !validRoutingModel(target.Model) {
+		return fmt.Errorf("%s.model 无效", name)
 	}
-	if target.Effort != "low" && target.Effort != "medium" && target.Effort != "high" && target.Effort != "xhigh" {
+	if !validRoutingEffort(target.Effort) {
 		return fmt.Errorf("%s.effort 必须是 low、medium、high 或 xhigh", name)
 	}
-	if target.Effort == "xhigh" && target.Model != smartRouteGrok {
-		return fmt.Errorf("%s 只有 Grok 4.6 可以配置 xhigh", name)
-	}
 	return nil
+}
+
+func validRoutingModel(model string) bool {
+	model = strings.TrimSpace(model)
+	return model != "" && len(model) <= 128 && !strings.ContainsAny(model, "\r\n\t ")
+}
+
+func validRoutingEffort(effort string) bool {
+	effort = strings.ToLower(strings.TrimSpace(effort))
+	return effort == "low" || effort == "medium" || effort == "high" || effort == "xhigh"
 }
 
 func isSmartRouterTarget(model string) bool {
