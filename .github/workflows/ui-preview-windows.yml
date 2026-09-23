@@ -1,0 +1,71 @@
+name: Windows UI Preview EXE
+
+on:
+  push:
+    branches:
+      - preview/wails-ui-only-exe
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: ui-preview-wails
+
+jobs:
+  windows-preview:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out preview source
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+          cache-dependency-path: ui-preview-wails/go.mod
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: ui-preview-wails/frontend/package-lock.json
+
+      - name: Build embedded interface
+        working-directory: ui-preview-wails/frontend
+        run: |
+          npm ci
+          npm run build
+
+      - name: Install Wails CLI
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.10.1
+
+      - name: Build Windows executable
+        run: |
+          wails build -clean -platform windows/amd64 -webview2 download -trimpath -ldflags "-s -w" -o YunqiaoCodexBridge-ui-preview.exe
+
+      - name: Scan with Microsoft Defender
+        shell: pwsh
+        run: |
+          $exe = Join-Path $PWD 'build\bin\YunqiaoCodexBridge-ui-preview.exe'
+          if (-not (Test-Path $exe)) { throw "Expected EXE not found: $exe" }
+          if (-not (Get-Command Start-MpScan -ErrorAction SilentlyContinue)) { throw 'Microsoft Defender scan command is unavailable; artifact withheld.' }
+          Start-MpScan -ScanType CustomScan -ScanPath $exe
+          $name = [IO.Path]::GetFileName($exe)
+          $hits = @(Get-MpThreatDetection -ErrorAction SilentlyContinue | Where-Object { ($_.Resources -join ';') -match [regex]::Escape($name) })
+          if ($hits.Count -gt 0) {
+            $hits | Select-Object ThreatID, ThreatName, InitialDetectionTime | Format-List | Out-String | Write-Host
+            throw 'Microsoft Defender reported a detection for the preview EXE; artifact withheld.'
+          }
+          Get-FileHash $exe -Algorithm SHA256 | Format-List | Out-String | Write-Host
+
+      - name: Upload preview artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: YunqiaoCodexBridge-ui-preview-windows-x64
+          path: ui-preview-wails/build/bin/YunqiaoCodexBridge-ui-preview.exe
+          if-no-files-found: error
+          retention-days: 14
