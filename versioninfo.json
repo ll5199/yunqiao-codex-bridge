@@ -1,7 +1,17 @@
 {
   "FixedFileInfo": {
-    "FileVersion": { "Major": 1, "Minor": 6, "Patch": 0, "Build": 0 },
-    "ProductVersion": { "Major": 1, "Minor": 6, "Patch": 0, "Build": 0 },
+    "FileVersion": {
+      "Major": 1,
+      "Minor": 6,
+      "Patch": 0,
+      "Build": 0
+    },
+    "ProductVersion": {
+      "Major": 1,
+      "Minor": 6,
+      "Patch": 0,
+      "Build": 0
+    },
     "FileFlagsMask": "3f",
     "FileFlags": "00",
     "FileOS": "040004",
@@ -23,8 +33,11 @@
     "SpecialBuild": ""
   },
   "VarFileInfo": {
-    "Translation": { "LangID": "0409", "CharsetID": "04B0" }
+    "Translation": {
+      "LangID": "0409",
+      "CharsetID": "04B0"
+    }
   },
   "IconPath": "",
-  "ManifestPath": ""
+  "ManifestPath": "build/windows/app.manifest"
 }
