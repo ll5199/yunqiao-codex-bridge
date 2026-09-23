@@ -28,6 +28,8 @@ jobs:
         run: |
           npm ci
           npm run build
+      - name: Resolve Go dependencies
+        run: go mod tidy
       - name: Test Go code
         run: go test ./...
       - name: Install Wails CLI
