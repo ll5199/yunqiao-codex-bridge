@@ -82,14 +82,7 @@ func withSmartRouterModel(models []string) []string {
 			result = append(result, model)
 		}
 	}
-	hasRouteTarget := false
-	for _, model := range smartRouterTargets {
-		if seen[model] {
-			hasRouteTarget = true
-			break
-		}
-	}
-	if !hasRouteTarget {
+	if len(result) == 0 {
 		sort.Strings(result)
 		return result
 	}

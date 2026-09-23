@@ -1,165 +1,68 @@
 {
   "schema_version": 1,
-  "policy_version": "2026-09-21.1",
+  "policy_version": "2026-09-23.8",
   "refresh_seconds": 300,
   "api_base_url": "https://api.velyn65.com/v1",
   "model_settings": {
-    "grok-4.6": {"enabled": true, "type": "日常文件操作", "effort": "low"},
-    "gpt-5.6-terra": {"enabled": true, "type": "长文档与多文件", "effort": "medium"},
-    "gpt-5.6-luna": {"enabled": true, "type": "结构化与 OCR", "effort": "medium"},
-    "gpt-5.6-sol": {"enabled": true, "type": "复杂标书写作", "effort": "high"}
+    "gpt-6-luna": {"enabled": true, "type": "优先执行绝大多数任务：查找、修改、复制粘贴、OCR、文档整理、信息提取、结构化、一般写作和普通多文件处理", "effort": "high"},
+    "gpt-6-sol": {"enabled": true, "type": "low 强度进行路由判断；仅在明确需要复杂标书方案、深度推理或大规模跨文件综合分析时执行任务", "effort": "high"}
   },
-  "default": {
-    "model": "grok-4.6",
-    "effort": "low"
+  "smart_routing": {
+    "enabled": true,
+    "router_model": "gpt-6-sol",
+    "router_effort": "low",
+    "execute_effort": "low",
+    "router_timeout_ms": 3000,
+    "fallback": "available_model"
   },
+  "default": {"model": "gpt-6-luna", "effort": "high"},
   "rules": [
     {
-      "reason": "routine_file_operation",
-      "model": "grok-4.6",
-      "effort": "low",
-      "priority": 100,
-      "match_any": [
-        "查找替换",
-        "查找并替换",
-        "批量替换",
-        "复制粘贴",
-        "替换公司名称",
-        "修改公司名称",
-        "替换日期",
-        "调整格式",
-        "统一格式",
-        "整理目录",
-        "重命名文件",
-        "查找文件",
-        "搜索文件",
-        "打开文件",
-        "上传文件",
-        "批量上传",
-        "上传网站",
-        "find and replace",
-        "copy and paste",
-        "rename file",
-        "find file",
-        "upload files"
-      ]
-    },
-    {
       "reason": "structured_batch",
-      "model": "gpt-5.6-luna",
-      "effort": "medium",
+      "model": "gpt-6-luna",
+      "effort": "high",
       "priority": 90,
-      "match_any": [
-        "字段提取",
-        "提取字段",
-        "分类整理",
-        "输出表格",
-        "格式转换",
-        "结构化",
-        "生成清单",
-        "去重",
-        "图片识别文字",
-        "图片转文字",
-        "文字识别",
-        "扫描件识别",
-        "field mapping",
-        "extract fields",
-        "categorize",
-        "schema",
-        "ocr"
-      ]
+      "match_any": ["字段提取", "提取字段", "分类整理", "输出表格", "格式转换", "结构化", "生成清单", "去重", "图片识别文字", "图片转文字", "文字识别", "扫描件识别", "field mapping", "extract fields", "categorize", "schema", "ocr"]
     },
     {
       "reason": "large_multi_document",
-      "model": "gpt-5.6-terra",
-      "effort": "medium",
+      "model": "gpt-6-sol",
+      "effort": "high",
       "priority": 80,
-      "min_text_chars": 700000,
-      "min_file_count": 6,
-      "match_any": [
-        "整个文件夹",
-        "全部文件",
-        "多份文档",
-        "跨文档",
-        "交叉分析",
-        "长文档",
-        "综合多份",
-        "entire folder",
-        "multiple documents",
-        "cross-document",
-        "long document"
-      ]
+      "min_text_chars": 120000,
+      "min_file_count": 3,
+      "match_any": ["整个文件夹", "全部文件", "多份文档", "跨文档", "交叉分析", "长文档", "综合多份", "entire folder", "multiple documents", "cross-document", "long document"]
     },
     {
       "reason": "complex_bid_drafting",
-      "model": "gpt-5.6-sol",
+      "model": "gpt-6-sol",
       "effort": "high",
       "priority": 70,
-      "match_any": [
-        "复杂改写",
-        "深度重写",
-        "评分点响应",
-        "逐条响应",
-        "complex rewrite",
-        "scoring point response"
-      ],
+      "match_any": ["复杂改写", "深度重写", "评分点响应", "逐条响应", "complex rewrite", "scoring point response"],
       "match_all_groups": [
-        [
-          "撰写",
-          "编写",
-          "起草",
-          "重写",
-          "改写",
-          "扩写",
-          "润色",
-          "优化",
-          "生成",
-          "制定",
-          "完善",
-          "draft",
-          "write",
-          "rewrite"
-        ],
-        [
-          "施工组织设计",
-          "技术方案",
-          "施工方案",
-          "实施方案",
-          "技术标",
-          "质量保证措施",
-          "安全保证措施",
-          "应急预案",
-          "项目重点",
-          "项目难点",
-          "评分标准",
-          "响应内容",
-          "technical proposal",
-          "implementation plan",
-          "quality assurance plan",
-          "scoring criteria"
-        ]
+        ["撰写", "编写", "起草", "重写", "改写", "扩写", "润色", "优化", "生成", "制定", "完善", "draft", "write", "rewrite"],
+        ["施工组织设计", "技术方案", "施工方案", "实施方案", "技术标", "质量保证措施", "安全保证措施", "应急预案", "项目重点", "项目难点", "评分标准", "响应内容", "technical proposal", "implementation plan", "quality assurance plan", "scoring criteria"]
       ]
+    },
+    {
+      "reason": "routine_document_work",
+      "model": "gpt-6-luna",
+      "effort": "high",
+      "priority": 60,
+      "match_any": ["查找", "搜索", "修改", "复制", "粘贴", "整理", "上传", "下载", "编辑", "校对", "总结", "摘要", "文档", "文件", "表格", "普通写作", "整理资料", "search", "find", "edit", "copy", "paste", "upload", "summarize", "document"]
     }
   ],
   "classifier": {
     "enabled": true,
-    "model": "gpt-5.6-luna",
+    "model": "gpt-6-sol",
     "effort": "low",
-    "confidence_threshold": 0.75,
+    "confidence_threshold": 0.8,
     "timeout_seconds": 8,
     "max_input_chars": 4000,
-    "low_confidence": {
-      "model": "gpt-5.6-terra",
-      "effort": "medium"
-    }
+    "low_confidence": {"model": "gpt-6-luna", "effort": "high"}
   },
   "ambiguous_distribution": {
-    "enabled": false,
-    "weights": {
-      "grok-4.6": 70,
-      "gpt-5.6-terra": 15,
-      "gpt-5.6-luna": 10,
-      "gpt-5.6-sol": 5
-    }
+    "enabled": true,
+    "weights": {"gpt-6-luna": 90, "gpt-6-sol": 10}
   }
 }
