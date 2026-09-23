@@ -7,10 +7,17 @@ const connectionNames = {
   official: "官方账号",
 };
 
+const models = [
+  { id: "auto", label: "智能路由", detail: "Auto" },
+  { id: "gpt5", label: "GPT-5", detail: "通用任务" },
+  { id: "codex", label: "GPT-5 Codex", detail: "代码任务" },
+  { id: "o3", label: "o3", detail: "推理任务" },
+];
+
 export function App() {
   const [advanced, setAdvanced] = useState(false);
   const [connection, setConnection] = useState("api");
-  const [model, setModel] = useState("智能路由（Auto）");
+  const [model, setModel] = useState("auto");
   const [saved, setSaved] = useState(true);
   const [notice, setNotice] = useState("");
   const [showKey, setShowKey] = useState(false);
@@ -52,15 +59,12 @@ export function App() {
           <p className="intro">选择模型，然后打开 Codex</p>
 
           <div className="model-field">
-            <label htmlFor="model-select">启动模型</label>
-            <div className="select-wrap">
-              <select id="model-select" name="launch-model" value={model} onChange={(event) => setModel(event.target.value)}>
-                <option>智能路由（Auto）</option>
-                <option>GPT-5</option>
-                <option>GPT-5 Codex</option>
-                <option>o3</option>
-              </select>
-              <ChevronDown className="select-chevron" size={17} strokeWidth={1.8} aria-hidden="true" />
+            <label>启动模型</label>
+            <div className="model-options" role="group" aria-label="选择启动模型">
+              {models.map((item) => <button key={item.id} type="button" className={`model-option ${model === item.id ? "selected" : ""}`} aria-pressed={model === item.id} onClick={() => setModel(item.id)}>
+                <span className="model-option-label">{item.label}</span>
+                <span className="model-option-detail">{item.detail}</span>
+              </button>)}
             </div>
             <div className="field-help">智能路由会根据任务自动选择合适模型</div>
           </div>
