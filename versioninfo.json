@@ -1,0 +1,30 @@
+{
+  "FixedFileInfo": {
+    "FileVersion": { "Major": 1, "Minor": 6, "Patch": 0, "Build": 0 },
+    "ProductVersion": { "Major": 1, "Minor": 6, "Patch": 0, "Build": 0 },
+    "FileFlagsMask": "3f",
+    "FileFlags": "00",
+    "FileOS": "040004",
+    "FileType": "01",
+    "FileSubType": "00"
+  },
+  "StringFileInfo": {
+    "Comments": "Cloud Codex connection client",
+    "CompanyName": "Yunqiao",
+    "FileDescription": "Yunqiao Codex Bridge",
+    "FileVersion": "1.6.0.0",
+    "InternalName": "YunqiaoCodexBridge",
+    "LegalCopyright": "Copyright Yunqiao",
+    "LegalTrademarks": "",
+    "OriginalFilename": "YunqiaoCodexBridge.exe",
+    "PrivateBuild": "",
+    "ProductName": "Yunqiao Codex Bridge",
+    "ProductVersion": "1.6.0.0",
+    "SpecialBuild": ""
+  },
+  "VarFileInfo": {
+    "Translation": { "LangID": "0409", "CharsetID": "04B0" }
+  },
+  "IconPath": "",
+  "ManifestPath": ""
+}
