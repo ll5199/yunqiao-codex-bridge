@@ -1,10 +1,18 @@
 {
   "$schema": "https://wails.io/schemas/config.v2.json",
+  "version": "2",
   "name": "YunqiaoCodexBridgePreview",
   "outputfilename": "YunqiaoCodexBridge-ui-preview",
   "assetdir": "frontend/dist",
   "author": {
     "name": "Yunqiao",
     "email": ""
+  },
+  "info": {
+    "companyName": "Yunqiao",
+    "productName": "Yunqiao Codex Bridge UI Preview",
+    "productVersion": "1.6.0.0",
+    "copyright": "Copyright Yunqiao",
+    "comments": "Interface-only preview. Does not connect to services or start Codex."
   }
 }
