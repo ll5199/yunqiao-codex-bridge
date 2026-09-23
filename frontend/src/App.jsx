@@ -172,6 +172,7 @@ export function App() {
 
   const modelOptions = models.length ? models : [];
   const accountVisible = connection === "bridge";
+  const connectionReady = connection === "official" || (connection === "bridge" ? cloud.loggedIn && Boolean(provider) : saved);
 
   return (
     <div className="desktop-shell">
@@ -181,7 +182,7 @@ export function App() {
           <div className="brand-copy"><strong>云桥</strong><span>熙楠</span></div>
         </div>
         <div className="top-actions">
-          <div className="connection-pill"><i className={saved ? "status-dot" : "status-dot pending"} /><span>{connectionLabel}</span><b>·</b><span>{saved ? "已配置" : "待配置"}</span></div>
+          <div className="connection-pill"><i className={connectionReady ? "status-dot" : "status-dot pending"} /><span>{connectionLabel}</span><b>·</b><span>{connectionReady ? "已就绪" : "待配置"}</span></div>
           <button className="quiet-button" onClick={() => setAdvanced((value) => !value)}>{advanced ? "收起设置" : "设置"}</button>
         </div>
       </header>
