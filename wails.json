@@ -1,0 +1,18 @@
+{
+  "$schema": "https://wails.io/schemas/config.v2.json",
+  "version": "2",
+  "name": "YunqiaoCodexBridge",
+  "outputfilename": "YunqiaoCodexBridge",
+  "assetdir": "frontend/dist",
+  "author": {
+    "name": "Yunqiao",
+    "email": ""
+  },
+  "info": {
+    "companyName": "Yunqiao",
+    "productName": "Yunqiao Codex Bridge",
+    "productVersion": "1.6.0.0",
+    "copyright": "Copyright Yunqiao",
+    "comments": "Cloud Codex connection client"
+  }
+}

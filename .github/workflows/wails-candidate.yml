@@ -1,0 +1,71 @@
+name: Wails Windows candidate
+
+on:
+  push:
+    branches:
+      - release/wails-functional-1.6.0
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-candidate:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+          cache: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Build frontend
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+      - name: Test Go code
+        run: go test ./...
+      - name: Install Wails CLI
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.10.1
+      - name: Build Windows client
+        shell: pwsh
+        run: |
+          wails build -clean -platform windows/amd64 -webview2 download -trimpath -ldflags "-s -w -H=windowsgui" -o YunqiaoCodexBridge.exe
+      - name: Check PE metadata and signature
+        shell: pwsh
+        run: |
+          $exe = Resolve-Path build/bin/YunqiaoCodexBridge.exe
+          $file = Get-Item $exe
+          if ($file.VersionInfo.ProductVersion -notlike '1.6.0*') { throw "Unexpected product version: $($file.VersionInfo.ProductVersion)" }
+          $signature = Get-AuthenticodeSignature $exe
+          Write-Host "Product: $($file.VersionInfo.ProductName) $($file.VersionInfo.ProductVersion)"
+          Write-Host "Signature status: $($signature.Status)"
+          Get-FileHash $exe -Algorithm SHA256 | Format-List
+      - name: Microsoft Defender scan
+        shell: pwsh
+        run: |
+          $exe = (Resolve-Path build/bin/YunqiaoCodexBridge.exe).Path
+          Update-MpSignature
+          Start-MpScan -ScanType CustomScan -ScanPath $exe
+          $detections = Get-MpThreatDetection | Where-Object { $_.Resources -match [regex]::Escape($exe) }
+          if ($detections) {
+            $detections | Format-List *
+            throw 'Microsoft Defender reported a detection for the candidate. Artifact withheld.'
+          }
+          Write-Host 'Microsoft Defender reported no detection for the candidate.'
+      - name: Stage candidate and checksum
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force candidate | Out-Null
+          Copy-Item build/bin/YunqiaoCodexBridge.exe candidate/
+          Get-FileHash candidate/YunqiaoCodexBridge.exe -Algorithm SHA256 | ForEach-Object { "$($_.Hash)  YunqiaoCodexBridge.exe" } | Set-Content candidate/SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: YunqiaoCodexBridge-wails-functional-candidate
+          path: candidate/
+          retention-days: 14

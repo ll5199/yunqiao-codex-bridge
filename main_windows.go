@@ -10,7 +10,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
 	"syscall"
@@ -280,11 +279,10 @@ const (
 	colorAccent     uintptr = 0x4F6035 // #35604F
 )
 
-func main() {
+func legacyMain() {
 	if runUpdateHelperIfRequested() {
 		return
 	}
-	runtime.LockOSThread()
 	loadSavedConfiguration()
 	procInitCommonControls.Call()
 
@@ -1340,7 +1338,7 @@ func findCodexInstallation() (codexInstallation, error) {
 	}
 
 	script := `$p = Get-AppxPackage | Where-Object { $_.Name -in @('OpenAI.Codex','OpenAI.CodexBeta') } | Sort-Object Version -Descending | Select-Object -First 1; if ($p) { $m = Get-AppxPackageManifest $p; $e = [string]$m.Package.Applications.Application.Executable; Write-Output ($p.InstallLocation + '|' + $p.PackageFamilyName + '|' + $e) }`
-	command := exec.Command("powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script)
+	command := exec.Command("powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script)
 	command.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
 	output, err := command.Output()
 	if err == nil {
