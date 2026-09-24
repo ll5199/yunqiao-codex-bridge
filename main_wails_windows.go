@@ -73,10 +73,11 @@ func main() {
 	app := &BridgeApp{cloudModels: make(map[string][]string), status: "准备就绪"}
 	err := wails.Run(&options.App{
 		Title:            appTitle,
-		Width:            1080,
-		Height:           780,
-		MinWidth:         850,
-		MinHeight:        650,
+		Width:            1000,
+		Height:           680,
+		MinWidth:         900,
+		MinHeight:        600,
+		Frameless:        true,
 		BackgroundColour: &options.RGBA{R: 246, G: 248, B: 245, A: 255},
 		AssetServer:      &assetserver.Options{Assets: wailsAssets},
 		OnStartup:        app.startup,
