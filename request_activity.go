@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -33,10 +34,15 @@ type requestActivityTracker struct {
 	mu      sync.Mutex
 	active  map[string]*requestActivity
 	counter atomic.Uint64
+	logger  func(string, string)
 }
 
-func newRequestActivityTracker() *requestActivityTracker {
-	return &requestActivityTracker{active: make(map[string]*requestActivity)}
+func newRequestActivityTracker(loggers ...func(string, string)) *requestActivityTracker {
+	tracker := &requestActivityTracker{active: make(map[string]*requestActivity)}
+	if len(loggers) > 0 {
+		tracker.logger = loggers[0]
+	}
+	return tracker
 }
 
 func (tracker *requestActivityTracker) begin(request *http.Request, model string) {
@@ -174,7 +180,7 @@ func (tracker *requestActivityTracker) wrap(response *http.Response) {
 		return
 	}
 	tracker.setModel(id, response.Request.Header.Get("X-Yunqiao-Model"))
-	response.Body = &activityReadCloser{source: response.Body, tracker: tracker, id: id}
+	response.Body = &activityReadCloser{source: response.Body, tracker: tracker, id: id, started: time.Now()}
 }
 
 func (tracker *requestActivityTracker) serveHTTP(writer http.ResponseWriter, request *http.Request) {
@@ -193,22 +199,35 @@ func (tracker *requestActivityTracker) serveHTTP(writer http.ResponseWriter, req
 }
 
 type activityReadCloser struct {
-	source  io.ReadCloser
-	tracker *requestActivityTracker
-	id      string
-	once    sync.Once
-	buffer  []byte
+	source   io.ReadCloser
+	tracker  *requestActivityTracker
+	id       string
+	once     sync.Once
+	buffer   []byte
+	started  time.Time
+	bytes    int64
+	first    bool
+	complete bool
 }
 
 func (body *activityReadCloser) Read(data []byte) (int, error) {
 	count, err := body.source.Read(data)
 	if count > 0 {
+		body.bytes += int64(count)
+		if !body.first {
+			body.first = true
+			body.log("proxy.stream_first_byte", "")
+		}
 		body.tracker.markStreaming(body.id)
 		body.buffer = append(body.buffer, data[:count]...)
 		if len(body.buffer) > 2048 {
 			body.buffer = append([]byte(nil), body.buffer[len(body.buffer)-2048:]...)
 		}
 		lower := bytes.ToLower(body.buffer)
+		if !body.complete && (bytes.Contains(lower, []byte(`"type":"response.completed"`)) || bytes.Contains(lower, []byte(`"type": "response.completed"`))) {
+			body.complete = true
+			body.log("proxy.stream_completed_event", "")
+		}
 		if bytes.Contains(lower, []byte(`"custom_tool_call"`)) ||
 			bytes.Contains(lower, []byte(`"function_call"`)) ||
 			bytes.Contains(lower, []byte(`"tool_search_call"`)) {
@@ -216,16 +235,27 @@ func (body *activityReadCloser) Read(data []byte) (int, error) {
 		}
 	}
 	if errors.Is(err, io.EOF) {
-		body.finalize()
+		body.finalize("eof")
+	} else if err != nil {
+		body.finalize("read_error")
 	}
 	return count, err
 }
 
 func (body *activityReadCloser) Close() error {
-	body.finalize()
+	body.finalize("closed")
 	return body.source.Close()
 }
 
-func (body *activityReadCloser) finalize() {
-	body.once.Do(func() { body.tracker.finish(body.id) })
+func (body *activityReadCloser) log(event, detail string) {
+	if body.tracker.logger != nil {
+		body.tracker.logger(event, "id="+body.id+" elapsed_ms="+strconv.FormatInt(time.Since(body.started).Milliseconds(), 10)+" bytes="+strconv.FormatInt(body.bytes, 10)+" "+detail)
+	}
+}
+
+func (body *activityReadCloser) finalize(reason string) {
+	body.once.Do(func() {
+		body.log("proxy.stream_end", "reason="+reason+" completed="+strconv.FormatBool(body.complete))
+		body.tracker.finish(body.id)
+	})
 }
