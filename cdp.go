@@ -34,7 +34,7 @@ type cdpTarget struct {
 	WebSocketDebuggerURL string `json:"webSocketDebuggerUrl"`
 }
 
-const rendererBridgeVersion = "1.5.13"
+const rendererBridgeVersion = "1.5.14"
 
 type chineseLocaleState struct {
 	Installed         bool   `json:"installed"`
@@ -161,7 +161,7 @@ func maintainCodexInjection(port int, models []string, defaultModel string, done
 			}
 			// Peripheral Codex windows may not run the renderer heartbeat. Do not
 			// repeatedly execute the full injection in them every five seconds.
-			if last := lastReinjected[target.ID]; !last.IsZero() && time.Since(last) < 30*time.Second {
+			if last := lastReinjected[target.ID]; !last.IsZero() && time.Since(last) < 2*time.Minute {
 				continue
 			}
 			if err := injectTarget(target.WebSocketDebuggerURL, expression); err != nil {
@@ -183,7 +183,7 @@ func maintainCodexInjection(port int, models []string, defaultModel string, done
 
 func rendererHealthExpression(modelCount int, defaultModel string) string {
 	defaultJSON, _ := json.Marshal(defaultModel)
-	return fmt.Sprintf("(() => { const s=window.__yunqiaoCodexBridgeStatus; return window.__yunqiaoCodexBridgeInstalled===%q && s?.installed===true && s.models===%d && window.__yunqiaoCodexDefaultModel===%s && Date.now()-Number(s.heartbeat||0)<15000; })()", rendererBridgeVersion, modelCount, defaultJSON)
+	return fmt.Sprintf("(() => { const s=window.__yunqiaoCodexBridgeStatus; return window.__yunqiaoCodexBridgeInstalled===%q && s?.installed===true && s.models===%d && window.__yunqiaoCodexDefaultModel===%s && Date.now()-Number(s.heartbeat||0)<90000; })()", rendererBridgeVersion, modelCount, defaultJSON)
 }
 
 func targetBridgeHealthy(webSocketURL, expression string) (bool, error) {

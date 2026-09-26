@@ -7,7 +7,26 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 )
+
+func TestUpstreamTransportBoundsWaitForResponseHeaders(t *testing.T) {
+	transport := newUpstreamTransport()
+	defer transport.CloseIdleConnections()
+	if transport.ResponseHeaderTimeout != upstreamHeaderTimeout || upstreamHeaderTimeout <= 0 {
+		t.Fatalf("upstream header wait has no bound: %s", transport.ResponseHeaderTimeout)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		time.Sleep(100 * time.Millisecond)
+		writer.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+	transport.ResponseHeaderTimeout = 20 * time.Millisecond
+	_, err := (&http.Client{Transport: transport}).Get(server.URL)
+	if err == nil || !strings.Contains(err.Error(), "timeout awaiting response headers") {
+		t.Fatalf("expected bounded response header wait, got %v", err)
+	}
+}
 
 func TestUpstreamTransportAvoidsHTTP2ProtocolErrors(t *testing.T) {
 	server := httptest.NewUnstartedServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {

@@ -219,10 +219,9 @@ func (body *activityReadCloser) Read(data []byte) (int, error) {
 			body.log("proxy.stream_first_byte", "")
 		}
 		body.tracker.markStreaming(body.id)
+		// Search this whole read before retaining only the overlap. A completed
+		// event can carry a response larger than 2 KiB in a single read.
 		body.buffer = append(body.buffer, data[:count]...)
-		if len(body.buffer) > 2048 {
-			body.buffer = append([]byte(nil), body.buffer[len(body.buffer)-2048:]...)
-		}
 		lower := bytes.ToLower(body.buffer)
 		if !body.complete && (bytes.Contains(lower, []byte(`"type":"response.completed"`)) || bytes.Contains(lower, []byte(`"type": "response.completed"`))) {
 			body.complete = true
@@ -232,6 +231,9 @@ func (body *activityReadCloser) Read(data []byte) (int, error) {
 			bytes.Contains(lower, []byte(`"function_call"`)) ||
 			bytes.Contains(lower, []byte(`"tool_search_call"`)) {
 			body.tracker.setStage(body.id, "tool")
+		}
+		if len(body.buffer) > 2048 {
+			body.buffer = append([]byte(nil), body.buffer[len(body.buffer)-2048:]...)
 		}
 	}
 	if errors.Is(err, io.EOF) {
