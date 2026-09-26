@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -45,7 +46,7 @@ func startAPIProxy(rawTarget, apiKey string, logger func(string, string), availa
 
 	store := newPersistentImageStore(imageStorageDirectory(), logger)
 	activity := newRequestActivityTracker(logger)
-	transport := newCompatibilityTransport(http.DefaultTransport, logger)
+	transport := newCompatibilityTransport(newUpstreamTransport(), logger)
 	routeMemory := newSmartRouteMemory(256)
 	proxyDone := make(chan struct{})
 	policyManager := newRoutingPolicyManager(routingPolicyURL, routingPolicyCachePath(), logger)
@@ -193,6 +194,15 @@ func startAPIProxy(rawTarget, apiKey string, logger func(string, string), availa
 		}
 	}()
 	return proxy, nil
+}
+
+// Some Sub2API frontends reset long-lived HTTP/2 Responses streams with
+// PROTOCOL_ERROR. Use HTTP/1.1 for the outbound hop while keeping SSE streaming.
+func newUpstreamTransport() *http.Transport {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.ForceAttemptHTTP2 = false
+	transport.TLSNextProto = map[string]func(string, *tls.Conn) http.RoundTripper{}
+	return transport
 }
 
 func (proxy *apiProxy) close() {
