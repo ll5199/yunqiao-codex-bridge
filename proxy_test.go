@@ -48,6 +48,39 @@ func TestCaptureSSEImage(t *testing.T) {
 	}
 }
 
+func TestOrdinaryResponsesDoNotCaptureUserImages(t *testing.T) {
+	encoded := base64.StdEncoding.EncodeToString([]byte(strings.Repeat("user-upload", 40)))
+	store := newImageStore(nil)
+	response, _ := json.Marshal(map[string]any{
+		"input": []any{map[string]any{"role": "user", "content": []any{map[string]any{
+			"type": "input_image", "image_url": "data:image/png;base64," + encoded,
+		}}}},
+		"output": []any{map[string]any{"type": "message", "content": []any{map[string]any{
+			"type": "output_text", "text": "已识别上传的图片",
+		}}}},
+	})
+	captureResponsesOutputImages(response, store)
+	if images := store.list(); len(images) != 0 {
+		t.Fatalf("user upload was shown as a generated image: %#v", images)
+	}
+
+	generated, _ := json.Marshal(map[string]any{
+		"output": []any{map[string]any{"type": "image_generation_call", "result": encoded}},
+	})
+	captureResponsesOutputImages(generated, store)
+	if images := store.list(); len(images) != 1 {
+		t.Fatalf("genuine generation was not captured: %#v", images)
+	}
+}
+
+func TestLegacyUnverifiedImageIsNotShown(t *testing.T) {
+	store := newImageStore(nil)
+	store.items = append(store.items, proxyImage{ID: "old", ConversationKey: "thread:current"})
+	if images := store.listForConversation("thread:current"); len(images) != 0 {
+		t.Fatalf("legacy unverified image was shown: %#v", images)
+	}
+}
+
 func TestCaptureDirectImageBody(t *testing.T) {
 	store := newImageStore(nil)
 	captureResponseImages([]byte("fake-png"), "image/png", store)

@@ -7,11 +7,11 @@
   window.__yunqiaoCodexModels = Array.from(new Set(incoming));
   window.__yunqiaoCodexDefaultModel = String(window.__YUNQIAO_INJECT_DEFAULT__ || window.__yunqiaoCodexModels[0] || "");
 
-  if (window.__yunqiaoCodexBridgeInstalled === "1.5.8" && window.__yunqiaoCodexBridgeMode === bridgeMode) {
+  if (window.__yunqiaoCodexBridgeInstalled === "1.5.9" && window.__yunqiaoCodexBridgeMode === bridgeMode) {
     window.__yunqiaoCodexBridgeRefresh?.();
     return;
   }
-  window.__yunqiaoCodexBridgeInstalled = "1.5.8";
+  window.__yunqiaoCodexBridgeInstalled = "1.5.9";
   window.__yunqiaoCodexBridgeMode = bridgeMode;
 
   function installChineseLocale() {
@@ -604,11 +604,6 @@
     }
   }
 
-  function looksLikeBase64(value) {
-    return typeof value === "string" && value.length > 256 &&
-      /^[A-Za-z0-9+/=\r\n]+$/.test(value);
-  }
-
   function addCapturedImage(source, metadata = {}) {
     if (typeof source !== "string" || !source) return;
     const key = metadata.id || (source.length > 512 ? `${source.slice(0, 256)}:${source.length}` : source);
@@ -642,47 +637,6 @@
     renderCapturedImages();
     return capturedImages.length;
   };
-
-  function captureImages(root, visited = new WeakSet(), depth = 0, parentType = "") {
-    if (!root || depth > 9) return;
-    if (typeof root === "string") {
-      if (root.startsWith("data:image/")) addCapturedImage(root);
-      return;
-    }
-    if (typeof root !== "object" || visited.has(root) || root instanceof Element) return;
-    visited.add(root);
-    const type = String(root.type || root.kind || parentType || "").toLowerCase();
-    const mimeType = String(root.mime_type || root.mimeType || "").toLowerCase();
-    for (const [key, value] of Object.entries(root)) {
-      const lowerKey = key.toLowerCase();
-      if (typeof value === "string") {
-        if (value.startsWith("data:image/")) {
-          addCapturedImage(value);
-          continue;
-        }
-        const imageKey = ["image_url", "imageurl", "b64_json", "b64json", "image_base64"].includes(lowerKey);
-        const imageType = type.includes("image_generation") || type === "output_image" ||
-          type === "image" || type === "images" || mimeType.startsWith("image/");
-        if ((lowerKey === "b64_json" || lowerKey === "image_base64" || (lowerKey === "result" && imageType) ||
-            (lowerKey === "data" && imageType)) && looksLikeBase64(value.replace(/\s/g, ""))) {
-          addCapturedImage(`data:${mimeType || "image/png"};base64,${value.replace(/\s/g, "")}`);
-          continue;
-        }
-        if ((imageKey || imageType) && /^https?:\/\//i.test(value)) {
-          addCapturedImage(value);
-          continue;
-        }
-        if ((lowerKey === "url" || lowerKey === "src") && /^https?:\/\/.+\.(png|jpe?g|webp|gif)(\?|$)/i.test(value)) {
-          addCapturedImage(value);
-        }
-      } else if (value && typeof value === "object") {
-        const childType = lowerKey.includes("image") || lowerKey === "inline_data" || lowerKey === "inlinedata"
-          ? "image"
-          : type;
-        captureImages(value, visited, depth + 1, childType);
-      }
-    }
-  }
 
   function visibleConversationNodes(selector) {
     const conversationRoot = document.querySelector("main") ||
@@ -837,7 +791,6 @@
   }
 
   let proxyImagePollInFlight = false;
-  let proxyImageRecoveryChecked = false;
   async function pollProxyImages() {
     if (proxyImagePollInFlight) return;
     proxyImagePollInFlight = true;
@@ -852,31 +805,6 @@
       for (const image of Array.isArray(payload?.images) ? payload.images : []) {
         if (typeof image?.source === "string") addCapturedImage(image.source, image);
       }
-      if (!proxyImageRecoveryChecked && !(payload?.images || []).length) {
-        proxyImageRecoveryChecked = true;
-        const recoveryResponse = await fetch("http://127.0.0.1:9230/yunqiao/images", {
-          cache: "no-store",
-          credentials: "omit",
-        });
-        if (recoveryResponse.ok) {
-          const recoveryPayload = await recoveryResponse.json();
-          const recoverable = (Array.isArray(recoveryPayload?.images) ? recoveryPayload.images : [])
-            .filter((image) => {
-              const key = String(image?.conversation_key || "");
-              const recent = Date.now() - Number(image?.created_at || 0) <= 2 * 60 * 60 * 1000;
-              return recent && (!key || key.startsWith("draft:"));
-            })
-            .sort((left, right) => Number(right?.created_at || 0) - Number(left?.created_at || 0))
-            .slice(0, 1);
-          for (const image of recoverable) {
-            if (typeof image?.source === "string") {
-              addCapturedImage(image.source, { ...image, conversation_key: conversationKey });
-            }
-          }
-          const recovered = capturedImages.filter((item) => recoverable.some((image) => image.id === item.id));
-          if (recovered.length) void associateImages(recovered, conversationKey);
-        }
-      }
     } catch {
     } finally {
       proxyImagePollInFlight = false;
@@ -888,7 +816,6 @@
     const patched = async function (...args) {
       const payload = await original.apply(this, args);
       try {
-        captureImages(payload);
         if (modelResponseLooksPatchable(payload)) patchContainer(payload);
       } catch {
       }
@@ -919,7 +846,6 @@
     }, true);
     window.addEventListener("message", (event) => {
       try {
-        captureImages(event?.data);
         patchMcpResponse(event?.data);
       } catch {
       }
@@ -927,7 +853,6 @@
   }
 
   function patchMcpResponse(data) {
-    captureImages(data);
     if (data?.type !== "mcp-response") return false;
     const message = data.message || data.response;
     const id = message?.id == null ? "" : String(message.id);
@@ -1017,7 +942,6 @@
           const original = client.sendRequest.bind(client);
           client.sendRequest = async function (method, params, options) {
             const result = await original(method, params, options);
-            captureImages(result);
             const actual = method === "send-cli-request-for-host" && params?.method ? String(params.method) : String(method || "");
             if (actual === "list-models-for-host") {
               try {

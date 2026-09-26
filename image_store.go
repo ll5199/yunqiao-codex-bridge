@@ -23,6 +23,7 @@ type proxyImage struct {
 	MimeType        string `json:"mime_type"`
 	CreatedAt       int64  `json:"created_at"`
 	ConversationKey string `json:"conversation_key,omitempty"`
+	Generated       bool   `json:"generated,omitempty"`
 	FilePath        string `json:"-"`
 }
 
@@ -98,7 +99,7 @@ func (store *imageStore) add(source string) bool {
 	store.seen[id] = true
 	store.items = append(store.items, proxyImage{
 		ID: id, Source: publicSource, DownloadURL: downloadURL, FileName: fileName,
-		MimeType: mimeType, CreatedAt: time.Now().UnixMilli(), FilePath: filePath,
+		MimeType: mimeType, CreatedAt: time.Now().UnixMilli(), FilePath: filePath, Generated: true,
 	})
 	if len(store.items) > 100 {
 		removed := store.items[0]
@@ -150,6 +151,11 @@ func (store *imageStore) listForConversation(key string) []proxyImage {
 	defer store.mu.Unlock()
 	result := make([]proxyImage, 0, len(store.items))
 	for _, item := range store.items {
+		// Older versions could save echoed user uploads as generated images.
+		// Keep the files on disk, but do not show unverified legacy entries.
+		if !item.Generated {
+			continue
+		}
 		if key == "" || item.ConversationKey == key {
 			result = append(result, item)
 		}
