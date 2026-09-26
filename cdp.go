@@ -34,7 +34,7 @@ type cdpTarget struct {
 	WebSocketDebuggerURL string `json:"webSocketDebuggerUrl"`
 }
 
-const rendererBridgeVersion = "1.5.9"
+const rendererBridgeVersion = "1.5.10"
 
 type chineseLocaleState struct {
 	Installed         bool   `json:"installed"`
@@ -175,7 +175,7 @@ func maintainCodexInjection(port int, models []string, defaultModel string, done
 
 func rendererHealthExpression(modelCount int, defaultModel string) string {
 	defaultJSON, _ := json.Marshal(defaultModel)
-	return fmt.Sprintf("(() => { const s=window.__yunqiaoCodexBridgeStatus; const l=window.__yunqiaoChineseLocaleStatus; return window.__yunqiaoCodexBridgeInstalled===%q && s?.installed===true && s.models===%d && window.__yunqiaoCodexDefaultModel===%s && Date.now()-Number(s.heartbeat||0)<15000 && l?.installed===true && l?.active===true && Date.now()-Number(l.heartbeat||0)<15000; })()", rendererBridgeVersion, modelCount, defaultJSON)
+	return fmt.Sprintf("(() => { const s=window.__yunqiaoCodexBridgeStatus; return window.__yunqiaoCodexBridgeInstalled===%q && s?.installed===true && s.models===%d && window.__yunqiaoCodexDefaultModel===%s && Date.now()-Number(s.heartbeat||0)<15000; })()", rendererBridgeVersion, modelCount, defaultJSON)
 }
 
 func targetBridgeHealthy(webSocketURL, expression string) (bool, error) {
