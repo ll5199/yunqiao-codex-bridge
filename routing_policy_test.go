@@ -47,7 +47,7 @@ func TestRoutingPolicyCacheKeepsValidatedPolicy(t *testing.T) {
 		t.Fatal(err)
 	}
 	loaded, err := loadRoutingPolicyCache(path)
-	if err != nil || loaded.PolicyVersion != "builtin-1.5.9" {
+	if err != nil || loaded.PolicyVersion != "builtin-1.5.10" {
 		t.Fatalf("cache did not round trip: policy=%#v err=%v", loaded, err)
 	}
 	before, _ := os.ReadFile(path)

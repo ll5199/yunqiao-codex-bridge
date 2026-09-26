@@ -65,10 +65,13 @@ func TestInjectionContainsIndependentSentinelAndModelPatch(t *testing.T) {
 
 func TestRendererHealthExpressionChecksVersionAndHeartbeat(t *testing.T) {
 	expression := rendererHealthExpression(3, `model-"quoted"`)
-	for _, expected := range []string{rendererBridgeVersion, "s.models===3", "s.heartbeat", "l?.installed===true", "l?.active===true", `model-\"quoted\"`} {
+	for _, expected := range []string{rendererBridgeVersion, "s.models===3", "s.heartbeat", `model-\"quoted\"`} {
 		if !strings.Contains(expression, expected) {
 			t.Fatalf("health expression is missing %q: %s", expected, expression)
 		}
+	}
+	if strings.Contains(expression, "__yunqiaoChineseLocaleStatus") {
+		t.Fatal("model bridge must not be reinjected when localization is pending")
 	}
 }
 
