@@ -4,6 +4,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 )
@@ -16,7 +17,12 @@ func TestUpstreamTransportAvoidsHTTP2ProtocolErrors(t *testing.T) {
 	server.StartTLS()
 	defer server.Close()
 	transport := newUpstreamTransport()
-	transport.TLSClientConfig = server.Client().Transport.(*http.Transport).TLSClientConfig.Clone()
+	if len(transport.TLSClientConfig.NextProtos) != 1 || transport.TLSClientConfig.NextProtos[0] != "http/1.1" {
+		t.Fatalf("outbound ALPN must advertise HTTP/1.1 only, got %v", transport.TLSClientConfig.NextProtos)
+	}
+	certificateConfig := server.Client().Transport.(*http.Transport).TLSClientConfig.Clone()
+	certificateConfig.NextProtos = append([]string(nil), transport.TLSClientConfig.NextProtos...)
+	transport.TLSClientConfig = certificateConfig
 	defer transport.CloseIdleConnections()
 	client := &http.Client{Transport: transport}
 	response, err := client.Get(server.URL)
@@ -27,6 +33,21 @@ func TestUpstreamTransportAvoidsHTTP2ProtocolErrors(t *testing.T) {
 	body, _ := io.ReadAll(response.Body)
 	if string(body) != "HTTP/1.1" {
 		t.Fatalf("expected HTTP/1.1 upstream, got %q", body)
+	}
+}
+
+func TestLiveUpstreamHTTP11Handshake(t *testing.T) {
+	if os.Getenv("YUNQIAO_LIVE_UPSTREAM_TEST") != "1" {
+		t.Skip("enable explicitly to verify the deployed endpoint")
+	}
+	client := &http.Client{Transport: newUpstreamTransport()}
+	response, err := client.Get("https://api.velyn65.com/v1/models")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.Proto != "HTTP/1.1" || response.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("unexpected upstream protocol/status: %s %d", response.Proto, response.StatusCode)
 	}
 }
 
