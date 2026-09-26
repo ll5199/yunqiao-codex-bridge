@@ -202,6 +202,14 @@ func newUpstreamTransport() *http.Transport {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.ForceAttemptHTTP2 = false
 	transport.TLSNextProto = map[string]func(string, *tls.Conn) http.RoundTripper{}
+	if transport.TLSClientConfig == nil {
+		transport.TLSClientConfig = &tls.Config{}
+	} else {
+		transport.TLSClientConfig = transport.TLSClientConfig.Clone()
+	}
+	// Disabling the HTTP/2 handler alone can still leave "h2" in TLS ALPN.
+	// Then the peer speaks HTTP/2 while net/http parses an HTTP/1.x response.
+	transport.TLSClientConfig.NextProtos = []string{"http/1.1"}
 	return transport
 }
 

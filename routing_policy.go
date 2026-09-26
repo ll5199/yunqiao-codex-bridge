@@ -78,7 +78,7 @@ type routingPolicy struct {
 
 func defaultRoutingPolicy() routingPolicy {
 	return routingPolicy{
-		SchemaVersion: 1, PolicyVersion: "builtin-1.5.12", RefreshSeconds: 300,
+		SchemaVersion: 1, PolicyVersion: "builtin-1.5.13", RefreshSeconds: 300,
 		APIBaseURL: defaultBaseURL,
 		ModelSettings: map[string]routingModelSettings{
 			smartRouteGrok:  {Enabled: true, Type: "日常文件操作", Effort: "low"},
