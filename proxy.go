@@ -44,7 +44,7 @@ func startAPIProxy(rawTarget, apiKey string, logger func(string, string), availa
 	}
 
 	store := newPersistentImageStore(imageStorageDirectory(), logger)
-	activity := newRequestActivityTracker()
+	activity := newRequestActivityTracker(logger)
 	transport := newCompatibilityTransport(http.DefaultTransport, logger)
 	routeMemory := newSmartRouteMemory(256)
 	proxyDone := make(chan struct{})

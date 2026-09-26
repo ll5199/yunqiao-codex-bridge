@@ -34,7 +34,7 @@ type cdpTarget struct {
 	WebSocketDebuggerURL string `json:"webSocketDebuggerUrl"`
 }
 
-const rendererBridgeVersion = "1.5.10"
+const rendererBridgeVersion = "1.5.11"
 
 type chineseLocaleState struct {
 	Installed         bool   `json:"installed"`
@@ -136,6 +136,7 @@ func maintainCodexInjection(port int, models []string, defaultModel string, done
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 	failures := make(map[string]int)
+	lastReinjected := make(map[string]time.Time)
 	for {
 		select {
 		case <-done:
@@ -155,6 +156,12 @@ func maintainCodexInjection(port int, models []string, defaultModel string, done
 			healthy, healthErr := targetBridgeHealthy(target.WebSocketDebuggerURL, healthExpression)
 			if healthErr == nil && healthy {
 				delete(failures, target.ID)
+				delete(lastReinjected, target.ID)
+				continue
+			}
+			// Peripheral Codex windows may not run the renderer heartbeat. Do not
+			// repeatedly execute the full injection in them every five seconds.
+			if last := lastReinjected[target.ID]; !last.IsZero() && time.Since(last) < 30*time.Second {
 				continue
 			}
 			if err := injectTarget(target.WebSocketDebuggerURL, expression); err != nil {
@@ -166,6 +173,7 @@ func maintainCodexInjection(port int, models []string, defaultModel string, done
 				continue
 			}
 			delete(failures, target.ID)
+			lastReinjected[target.ID] = time.Now()
 			if logger != nil {
 				logger("bridge.reinjected", fmt.Sprintf("target=%s", safeLogID(target.ID)))
 			}
