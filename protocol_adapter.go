@@ -31,6 +31,8 @@ func adaptResponsesRequestWithRouter(request *http.Request, path string, logger 
 		return path, ""
 	}
 	request.Body = io.NopCloser(bytes.NewReader(body))
+	request.GetBody = func() (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(body)), nil }
+	request.ContentLength = int64(len(body))
 	var input map[string]any
 	if json.Unmarshal(body, &input) != nil {
 		return path, ""
