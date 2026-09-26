@@ -21,7 +21,6 @@ func TestInjectionContainsIndependentSentinelAndModelPatch(t *testing.T) {
 		`uiTranslations`,
 		`[data-testid='conversation-turn']`,
 		`__YUNQIAO_LOCALIZATION_ONLY__`,
-		`image_generation`,
 		`生成的图片`,
 		`__yunqiaoAcceptProxyImages`,
 		`127.0.0.1:9230/yunqiao/images`,
@@ -37,6 +36,11 @@ func TestInjectionContainsIndependentSentinelAndModelPatch(t *testing.T) {
 	}
 	if strings.Contains(rendererInjection, "window.location.reload()") {
 		t.Fatal("locale injection still uses a renderer reload instead of requesting a full Codex process restart")
+	}
+	for _, unsafe := range []string{"captureImages(payload)", "captureImages(event?.data)", "captureImages(result)", "proxyImageRecoveryChecked"} {
+		if strings.Contains(rendererInjection, unsafe) {
+			t.Fatalf("renderer may mislabel an uploaded or historical image as generated: %q", unsafe)
+		}
 	}
 	if !strings.Contains(rendererInjection, `__yunqiaoCodexBridgeInstalled = "`+rendererBridgeVersion+`"`) {
 		t.Fatal("renderer bridge version does not match the CDP watchdog")

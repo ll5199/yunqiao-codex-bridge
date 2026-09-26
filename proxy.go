@@ -241,8 +241,42 @@ func (reader *captureReadCloser) finalize() {
 		if reader.overflow || reader.store == nil || reader.buffer.Len() == 0 {
 			return
 		}
-		captureResponseImages(reader.buffer.Bytes(), reader.contentType, reader.store)
+		captureResponsesOutputImages(reader.buffer.Bytes(), reader.store)
 	})
+}
+
+// Ordinary Responses JSON can echo user input images. Only image-generation
+// output items are eligible for the generated-image tray.
+func captureResponsesOutputImages(body []byte, store *imageStore) {
+	var response map[string]any
+	if json.Unmarshal(body, &response) != nil {
+		return
+	}
+	if containsImageGeneration(response) && stringValue(response["type"]) == "image_generation_call" {
+		for _, source := range extractImageSources(response) {
+			store.add(source)
+		}
+		return
+	}
+	for _, raw := range responseOutputItems(response) {
+		if containsImageGeneration(raw) {
+			for _, source := range extractImageSources(raw) {
+				store.add(source)
+			}
+		}
+	}
+}
+
+func responseOutputItems(response map[string]any) []any {
+	if items, ok := response["output"].([]any); ok {
+		return items
+	}
+	if nested, ok := response["response"].(map[string]any); ok {
+		if items, ok := nested["output"].([]any); ok {
+			return items
+		}
+	}
+	return nil
 }
 
 type imageCompatibleSSEBody struct {
@@ -316,11 +350,11 @@ func transformImageSSE(source io.Reader, destination io.Writer, store *imageStor
 		}
 		state.rememberResponse(event)
 		eventType, _ := event["type"].(string)
-		imageEvent := containsImageGeneration(event)
+		imageEvent, imageSources := generatedImageEventSources(event)
 		if imageEvent {
 			state.imageSeen = true
 			state.imageEvents++
-			for _, source := range extractImageSources(event) {
+			for _, source := range imageSources {
 				if store.add(source) {
 					state.newImageCaptured = true
 				}
@@ -369,6 +403,23 @@ func transformImageSSE(source io.Reader, destination io.Writer, store *imageStor
 		logger("image.stream_transformed", fmt.Sprintf("events=%d response_id=%s", state.imageEvents, safeLogID(state.responseID)))
 	}
 	return nil
+}
+
+func generatedImageEventSources(event map[string]any) (bool, []string) {
+	eventType := stringValue(event["type"])
+	if strings.Contains(eventType, "image_generation") {
+		return true, extractImageSources(event)
+	}
+	if item, ok := event["item"].(map[string]any); ok &&
+		strings.Contains(stringValue(item["type"]), "image_generation") {
+		return true, extractImageSources(item)
+	}
+	for _, item := range responseOutputItems(event) {
+		if containsImageGeneration(item) {
+			return true, extractImageSources(item)
+		}
+	}
+	return false, nil
 }
 
 func sseData(lines []string) string {
