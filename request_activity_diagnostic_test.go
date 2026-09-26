@@ -7,6 +7,22 @@ import (
 	"testing"
 )
 
+func TestStreamDiagnosticsDetectsCompletionBeforeLargePayloadTail(t *testing.T) {
+	var events []string
+	tracker := newRequestActivityTracker(func(event, _ string) { events = append(events, event) })
+	request, _ := http.NewRequest(http.MethodPost, "http://localhost/v1/responses", nil)
+	tracker.begin(request, "gpt-6-luna")
+	response := &http.Response{Request: request, Body: io.NopCloser(strings.NewReader(
+		`data: {"type":"response.completed","response":{"output":"` + strings.Repeat("x", 132000) + `"}}` + "\n\n"))}
+	tracker.wrap(response)
+	if _, err := io.ReadAll(response.Body); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(strings.Join(events, ","), "proxy.stream_completed_event") {
+		t.Fatalf("large completed event was missed: %v", events)
+	}
+}
+
 func TestStreamDiagnosticsReportFirstByteCompletionAndEnd(t *testing.T) {
 	var events []string
 	tracker := newRequestActivityTracker(func(event, _ string) { events = append(events, event) })

@@ -22,6 +22,7 @@ const (
 	proxyPort       = 9230
 	codexProxyBase  = "http://127.0.0.1:9230/v1"
 	maxCaptureBytes = 64 << 20
+	upstreamHeaderTimeout = 60 * time.Second
 )
 
 type apiProxy struct {
@@ -119,6 +120,11 @@ func startAPIProxy(rawTarget, apiKey string, logger func(string, string), availa
 			if logger != nil {
 				logger("proxy.error", proxyErr.Error())
 			}
+			var netError net.Error
+			if errors.As(proxyErr, &netError) && netError.Timeout() {
+				http.Error(writer, "Yunqiao Bridge upstream response timeout (60s)", http.StatusGatewayTimeout)
+				return
+			}
 			http.Error(writer, "Yunqiao Bridge proxy error", http.StatusBadGateway)
 		},
 	}
@@ -200,6 +206,9 @@ func startAPIProxy(rawTarget, apiKey string, logger func(string, string), availa
 // PROTOCOL_ERROR. Use HTTP/1.1 for the outbound hop while keeping SSE streaming.
 func newUpstreamTransport() *http.Transport {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
+	// A stalled upstream must not leave Codex thinking indefinitely. This
+	// only bounds the wait for response headers; long SSE tasks remain open.
+	transport.ResponseHeaderTimeout = upstreamHeaderTimeout
 	transport.ForceAttemptHTTP2 = false
 	transport.TLSNextProto = map[string]func(string, *tls.Conn) http.RoundTripper{}
 	if transport.TLSClientConfig == nil {
