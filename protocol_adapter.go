@@ -358,7 +358,7 @@ func compatibilityErrorMessage(family, model string, status int, body []byte) st
 		return fmt.Sprintf("%s 暂时没有可用的上游账号（HTTP 503）。这是 Sub2API 账号池已耗尽或全部处于限流/不可用状态，请检查账号状态、并发、额度和调度冷却时间。", model)
 	case status == http.StatusServiceUnavailable &&
 		(strings.Contains(lower, "service temporarily unavailable") || strings.Contains(lower, "no available accounts")):
-		return fmt.Sprintf("%s 暂时没有可用的上游账号（HTTP 503）。账号可能已达到额度、处于自动冷却或不支持当前模型；智能路由已尝试备用模型，请在 Sub2API 检查该分组的账号状态和模型映射。", model)
+		return fmt.Sprintf("%s 暂时没有可用的上游账号（HTTP 503）。账号可能已达到额度、处于自动冷却或不支持当前模型；请在 Sub2API 检查该分组的账号状态和模型映射。", model)
 	case family == "gemini" && status == http.StatusTooManyRequests &&
 		(strings.Contains(lower, "concurrency slot") || strings.Contains(lower, "resource_exhausted")):
 		return "Gemini 请求未完成：当前 Sub2API 账号的并发槽仍被其他请求占用。Bridge 已启用 Gemini 请求排队；如果持续出现，请在 Sub2API 检查该账号的并发数、限流状态或更换可用账号。"
