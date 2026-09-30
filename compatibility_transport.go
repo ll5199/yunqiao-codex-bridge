@@ -12,10 +12,11 @@ import (
 )
 
 type compatibilityTransport struct {
-	base       http.RoundTripper
-	gemini     sync.Mutex
-	logger     func(string, string)
-	retryDelay time.Duration
+	base          http.RoundTripper
+	gemini        sync.Mutex
+	logger        func(string, string)
+	retryDelay    time.Duration
+	fallbackModel func(string) (string, string)
 }
 
 func newCompatibilityTransport(base http.RoundTripper, logger func(string, string)) http.RoundTripper {
@@ -45,11 +46,15 @@ func (transport *compatibilityTransport) RoundTrip(request *http.Request) (*http
 	}
 	if err != nil || response == nil || response.StatusCode != http.StatusServiceUnavailable ||
 		request.Header.Get("X-Yunqiao-Smart-Route") != "1" || request.GetBody == nil ||
-		request.Header.Get("X-Yunqiao-Model") == smartRouteGrok {
+		transport.fallbackModel == nil {
 		return response, err
 	}
 
-	retry, retryErr := smartRouteFallbackRequest(request, smartRouteGrok)
+	model, effort := transport.fallbackModel(request.Header.Get("X-Yunqiao-Model"))
+	if model == "" || model == request.Header.Get("X-Yunqiao-Model") {
+		return response, nil
+	}
+	retry, retryErr := smartRouteFallbackRequest(request, model, effort)
 	if retryErr != nil {
 		return response, nil
 	}
@@ -57,7 +62,7 @@ func (transport *compatibilityTransport) RoundTrip(request *http.Request) (*http
 	if transport.logger != nil {
 		transport.logger("router.fallback", fmt.Sprintf(
 			"from=%s to=%s reason=upstream_503",
-			safeLogID(request.Header.Get("X-Yunqiao-Model")), smartRouteGrok,
+			safeLogID(request.Header.Get("X-Yunqiao-Model")), safeLogID(model),
 		))
 	}
 	return transport.roundTripOnce(retry)
@@ -157,7 +162,7 @@ func (transport *compatibilityTransport) roundTripOnce(request *http.Request) (*
 	return response, nil
 }
 
-func smartRouteFallbackRequest(request *http.Request, model string) (*http.Request, error) {
+func smartRouteFallbackRequest(request *http.Request, model string, effort string) (*http.Request, error) {
 	body, err := request.GetBody()
 	if err != nil {
 		return nil, err
@@ -172,6 +177,9 @@ func smartRouteFallbackRequest(request *http.Request, model string) (*http.Reque
 		return nil, err
 	}
 	input["model"] = model
+	if effort != "" {
+		input["reasoning"] = map[string]any{"effort": effort}
+	}
 	encoded, err := json.Marshal(input)
 	if err != nil {
 		return nil, err
@@ -184,7 +192,11 @@ func smartRouteFallbackRequest(request *http.Request, model string) (*http.Reque
 	retry.ContentLength = int64(len(encoded))
 	retry.Header.Set("Content-Type", "application/json")
 	retry.Header.Set("X-Yunqiao-Model", model)
-	retry.Header.Set("X-Yunqiao-Family", "grok")
+	retry.Header.Del("X-Yunqiao-Family")
+	if strings.Contains(strings.ToLower(model), "grok") {
+		retry.Header.Set("X-Yunqiao-Family", "grok")
+	}
+	retry.Header.Set("X-Yunqiao-Reasoning-Effort", effort)
 	retry.Header.Del("Content-Length")
 	return retry, nil
 }

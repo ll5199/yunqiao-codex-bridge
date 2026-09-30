@@ -19,9 +19,9 @@ import (
 )
 
 const (
-	proxyPort       = 9230
-	codexProxyBase  = "http://127.0.0.1:9230/v1"
-	maxCaptureBytes = 64 << 20
+	proxyPort             = 9230
+	codexProxyBase        = "http://127.0.0.1:9230/v1"
+	maxCaptureBytes       = 64 << 20
 	upstreamHeaderTimeout = 60 * time.Second
 )
 
@@ -52,6 +52,7 @@ func startAPIProxy(rawTarget, apiKey string, logger func(string, string), availa
 	proxyDone := make(chan struct{})
 	policyManager := newRoutingPolicyManager(routingPolicyURL, routingPolicyCachePath(), logger)
 	smartRouter := newDynamicSmartRouter(policyManager, rawTarget, apiKey, logger, availableModels...)
+	transport.(*compatibilityTransport).fallbackModel = smartRouter.fallbackModel
 	reverse := &httputil.ReverseProxy{
 		FlushInterval: 30 * time.Millisecond,
 		Transport:     transport,

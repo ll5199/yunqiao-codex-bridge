@@ -167,6 +167,39 @@ func (router *dynamicSmartRouter) availableModelNames() []string {
 	return result
 }
 
+// Select only a currently available text model, using the latest policy on
+// every failure. Never fall back to the legacy built-in target list.
+func (router *dynamicSmartRouter) fallbackModel(failed string) (string, string) {
+	policy := router.manager.snapshot()
+	models := []string{policy.Default.Model}
+	if router.hasAvailabilityList() {
+		models = append(models, router.availableModelNames()...)
+	} else {
+		configured := make([]string, 0, len(policy.ModelSettings))
+		for model, settings := range policy.ModelSettings {
+			if settings.Enabled {
+				configured = append(configured, model)
+			}
+		}
+		sort.Strings(configured)
+		models = append(models, configured...)
+	}
+	for _, model := range models {
+		lower := strings.ToLower(model)
+		if model == "" || model == failed || model == smartRouterModel ||
+			strings.Contains(lower, "gemini") || strings.Contains(lower, "image") || strings.Contains(lower, "video") {
+			continue
+		}
+		if settings, ok := policy.ModelSettings[model]; ok && !settings.Enabled {
+			continue
+		}
+		if router.modelAvailable(model, policy) {
+			return model, effortForModel(policy, model)
+		}
+	}
+	return "", ""
+}
+
 func (router *dynamicSmartRouter) classify(parent context.Context, input map[string]any, policy routingPolicy, matches []routingRule) (classifierResult, error) {
 	if router.baseURL == "" || router.apiKey == "" {
 		return classifierResult{}, errors.New("分类器缺少 API 地址或 Key")

@@ -715,7 +715,7 @@ func TestDirectGrokConcurrencyResponseRetriesOnce(t *testing.T) {
 	}
 }
 
-func TestSmartRoute503FallsBackToGrok(t *testing.T) {
+func TestSmartRoute503FallsBackToAvailableLuna(t *testing.T) {
 	models := make([]string, 0, 2)
 	transport := newCompatibilityTransport(roundTripFunc(func(request *http.Request) (*http.Response, error) {
 		body, _ := io.ReadAll(request.Body)
@@ -734,7 +734,8 @@ func TestSmartRoute503FallsBackToGrok(t *testing.T) {
 			Body:       io.NopCloser(strings.NewReader(responseBody)),
 			Request:    request,
 		}, nil
-	}), nil)
+	}), nil).(*compatibilityTransport)
+	transport.fallbackModel = func(string) (string, string) { return "gpt-6-luna", "medium" }
 	payload := []byte(`{"model":"gpt-5.6-terra","input":"summarize the folder","stream":true}`)
 	request := httptest.NewRequest(http.MethodPost, "http://upstream/v1/responses", bytes.NewReader(payload))
 	request.GetBody = func() (io.ReadCloser, error) {
@@ -747,7 +748,7 @@ func TestSmartRoute503FallsBackToGrok(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = response.Body.Close()
-	if response.StatusCode != http.StatusOK || len(models) != 2 || models[0] != smartRouteTerra || models[1] != smartRouteGrok {
+	if response.StatusCode != http.StatusOK || len(models) != 2 || models[0] != smartRouteTerra || models[1] != "gpt-6-luna" {
 		t.Fatalf("unexpected smart fallback: status=%d models=%v", response.StatusCode, models)
 	}
 }
@@ -821,7 +822,7 @@ func TestGenericUnavailableErrorIsExplained(t *testing.T) {
 		"grok", smartRouteGrok, http.StatusServiceUnavailable,
 		[]byte(`{"error":{"message":"Service temporarily unavailable","type":"api_error"}}`),
 	)
-	if !strings.Contains(message, "上游账号") || !strings.Contains(message, "智能路由已尝试备用模型") {
+	if !strings.Contains(message, "上游账号") || strings.Contains(message, "智能路由已尝试备用模型") {
 		t.Fatalf("unexpected generic 503 explanation: %s", message)
 	}
 }
