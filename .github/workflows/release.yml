@@ -42,8 +42,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release view "v${{ steps.version.outputs.version }}" *> $null
-          if ($LASTEXITCODE -eq 0) { "exists=true" >> $env:GITHUB_OUTPUT }
+          $releases = gh release list --limit 100 --json tagName | ConvertFrom-Json
+          $exists = @($releases | Where-Object { $_.tagName -eq "v${{ steps.version.outputs.version }}" }).Count -gt 0
+          if ($exists) { "exists=true" >> $env:GITHUB_OUTPUT }
           else { "exists=false" >> $env:GITHUB_OUTPUT }
       - name: Build frontend
         if: steps.existing.outputs.exists != 'true'
