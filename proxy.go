@@ -79,7 +79,7 @@ func startAPIProxy(rawTarget, apiKey string, logger func(string, string), availa
 			request.URL.Host = target.Host
 			request.URL.Path = targetPath + "/" + strings.TrimLeft(incomingPath, "/")
 			request.Host = target.Host
-			request.Header.Set("Authorization", "Bearer "+strings.TrimSpace(apiKey))
+			setRelayAuthorization(request, apiKey)
 			request.Header.Set("Accept-Encoding", "identity")
 			request.Header.Set("X-Yunqiao-Bridge", appVersion)
 		},

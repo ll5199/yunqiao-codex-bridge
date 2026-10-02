@@ -1255,22 +1255,28 @@ func decryptText(encoded string) (string, error) {
 }
 
 func writeCodexProviderConfig(baseURL, model string) error {
-	home, err := os.UserHomeDir()
+	codexHome, err := effectiveCodexHome()
 	if err != nil {
 		return err
 	}
-	codexHome := filepath.Join(home, ".codex")
 	configPath := filepath.Join(codexHome, "config.toml")
 	if err := os.MkdirAll(codexHome, 0700); err != nil {
 		return err
 	}
-	existing, _ := os.ReadFile(configPath)
+	existing, err := os.ReadFile(configPath)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("读取 Codex 配置失败：%w", err)
+	}
 	if len(existing) > 0 {
 		if err := backupCodexConfig(existing); err != nil {
 			return err
 		}
 	}
-	updated := updateCodexConfig(string(existing), baseURL, model)
+	preserveAuth, err := preserveChatGPTAuth(codexHome, string(existing))
+	if err != nil {
+		return err
+	}
+	updated := updateCodexConfigWithAuth(string(existing), baseURL, model, preserveAuth)
 	if err := os.WriteFile(configPath, []byte(updated), 0600); err != nil {
 		return fmt.Errorf("写入 %s 失败：%w", configPath, err)
 	}
@@ -1290,11 +1296,11 @@ func backupCodexConfig(existing []byte) error {
 }
 
 func restoreNativeCodexConfig() error {
-	home, err := os.UserHomeDir()
+	codexHome, err := effectiveCodexHome()
 	if err != nil {
 		return err
 	}
-	configPath := filepath.Join(home, ".codex", "config.toml")
+	configPath := filepath.Join(codexHome, "config.toml")
 	existing, err := os.ReadFile(configPath)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
@@ -1399,7 +1405,7 @@ func launchCodex(install codexInstallation) error {
 	diagnosticLog("launch.working_directory", workingDirectory)
 
 	arguments := fmt.Sprintf("--remote-debugging-port=%d --remote-allow-origins=http://127.0.0.1:%d --inspect=127.0.0.1:%d --lang=zh-CN", cdpPort, cdpPort, inspectorPort)
-	if install.AUMID != "" {
+	if install.AUMID != "" && strings.TrimSpace(os.Getenv("CODEX_HOME")) == "" {
 		if _, err := activateApplication(install.AUMID, arguments); err == nil {
 			return nil
 		}
@@ -1443,7 +1449,7 @@ func launchCodexNative(install codexInstallation) error {
 	_ = kill.Run()
 	time.Sleep(800 * time.Millisecond)
 
-	if install.AUMID != "" {
+	if install.AUMID != "" && strings.TrimSpace(os.Getenv("CODEX_HOME")) == "" {
 		if _, err := activateApplication(install.AUMID, ""); err == nil {
 			return nil
 		}
