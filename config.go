@@ -17,7 +17,7 @@ import (
 const (
 	defaultBaseURL = "https://api.velyn65.com/v1"
 	providerID     = "yunqiao_bridge"
-	appVersion     = "1.5.15"
+	appVersion     = "1.5.16"
 )
 
 type appConfig struct {
@@ -204,6 +204,10 @@ func versionPart(parts []string, index int) int {
 }
 
 func updateCodexConfig(existing, baseURL, model string) string {
+	return updateCodexConfigWithAuth(existing, baseURL, model, bridgeRequiresAuth(existing))
+}
+
+func updateCodexConfigWithAuth(existing, baseURL, model string, preserveAuth bool) string {
 	const beginMarker = "# BEGIN YUNQIAO CODEX BRIDGE"
 	const endMarker = "# END YUNQIAO CODEX BRIDGE"
 
@@ -261,7 +265,7 @@ func updateCodexConfig(existing, baseURL, model string) string {
 		`name = "Yunqiao API"`,
 		"base_url = " + strconv.Quote(strings.TrimRight(baseURL, "/")),
 		`wire_api = "responses"`,
-		`requires_openai_auth = false`,
+		"requires_openai_auth = " + strconv.FormatBool(preserveAuth && strings.TrimRight(baseURL, "/") == codexProxyBase),
 		endMarker,
 	}
 
