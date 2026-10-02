@@ -47,6 +47,7 @@ const (
 	cbGetCurSel        = 0x0147
 	cbSetCurSel        = 0x014E
 	bmSetCheck         = 0x00F1
+	bmGetCheck         = 0x00F0
 	emSetCueBanner     = 0x1501
 	pbmSetPos          = 0x0402
 	pbmSetRange32      = 0x0406
@@ -68,6 +69,7 @@ const (
 	lbsNotify           = 0x0001
 	ssCenterImage       = 0x0200
 	bsAutoRadioButton   = 0x0009
+	bsAutoCheckBox      = 0x0003
 	bsDefaultPushButton = 0x0001
 	cbsDropDownList     = 0x0003
 	cbsHasStrings       = 0x0200
@@ -215,6 +217,7 @@ var (
 	statusLabel               uintptr
 	fetchButton               uintptr
 	launchButton              uintptr
+	authCheckbox              uintptr
 	nativeLaunchButton        uintptr
 	updateButton              uintptr
 	advertisementLabel        uintptr
@@ -472,6 +475,8 @@ func createControls(hwnd uintptr) {
 	nativeLaunchButton = createControl(hwnd, "BUTTON", "原生账号启动", wsChild|wsVisible|wsTabStop, 380, 304, 176, 38, controlNativeLaunch)
 	updateButton = createControl(hwnd, "BUTTON", "检查云桥更新", wsChild|wsVisible|wsTabStop, 570, 304, 148, 38, controlUpdate)
 	modelsLabel = createLabel(hwnd, "API 返回的模型", 28, 366, 180, 24, font)
+	authCheckbox = createControl(hwnd, "BUTTON", "保留 ChatGPT 登录（浏览器扩展）", wsChild|wsVisible|wsTabStop|bsAutoCheckBox, 210, 366, 505, 24, 0)
+	procSendMessageW.Call(authCheckbox, bmSetCheck, boolToUintptr(chatGPTAuthPreference(currentConfig.PreserveChatGPTAuth)), 0)
 	modelList = createControl(hwnd, "LISTBOX", "", wsChild|wsVisible|wsBorder|wsVScroll|lbsNotify, 28, 392, 690, 220, 0)
 	statusTitle = createLabel(hwnd, "运行状态", 28, 636, 100, 22, font)
 	statusLabel = createControl(hwnd, "EDIT", "填写接口和 Key 后点击“获取模型”。", wsChild|wsVisible|wsBorder|esAutoHScroll|esReadOnly, 28, 662, 690, 32, 0)
@@ -481,7 +486,7 @@ func createControls(hwnd uintptr) {
 	footerLabel = createLabel(hwnd, fmt.Sprintf("云桥服务器更新源  ·  Bridge v%s", appVersion), 28, 758, 360, 20, font)
 	layoutControls(744, 771)
 
-	for _, handle := range []uintptr{modeAccountButton, modeExternalButton, accountEdit, passwordEdit, loginButton, logoutButton, memberInfoLabel, providerCombo, accountModelCombo, usageList, advertisementLabel, advertisementButton, baseEdit, keyEdit, fetchButton, launchButton, nativeLaunchButton, updateButton, modelList, statusLabel} {
+	for _, handle := range []uintptr{modeAccountButton, modeExternalButton, accountEdit, passwordEdit, loginButton, logoutButton, memberInfoLabel, providerCombo, accountModelCombo, usageList, advertisementLabel, advertisementButton, baseEdit, keyEdit, fetchButton, launchButton, nativeLaunchButton, updateButton, authCheckbox, modelList, statusLabel} {
 		procSendMessageW.Call(handle, wmSetFont, font, 1)
 	}
 	if currentConfig.BaseURL != "" {
@@ -518,6 +523,7 @@ func layoutControls(width, height int) {
 		{fetchButton, layout.FetchButton}, {launchButton, layout.LaunchButton},
 		{nativeLaunchButton, layout.NativeLaunchButton},
 		{updateButton, layout.UpdateButton}, {modelsLabel, layout.ModelsLabel},
+		{authCheckbox, controlRect{X: layout.ModelsLabel.X + 180, Y: layout.ModelsLabel.Y, Width: layout.ModelsList.Width - 180, Height: layout.ModelsLabel.Height}},
 		{modelList, layout.ModelsList}, {statusTitle, layout.StatusTitle},
 		{statusLabel, layout.StatusEdit}, {progressLabel, layout.ProgressLabel},
 		{progressBar, layout.ProgressBar}, {footerLabel, layout.Footer},
@@ -857,6 +863,8 @@ func startSaveAndLaunch() {
 			return
 		}
 	}
+	checked, _, _ := procSendMessageW.Call(authCheckbox, bmGetCheck, 0, 0)
+	preserveAuth := checked != 0
 	setBusy(true, "正在保存配置…")
 	go func() {
 		baseURL = remoteAPIBaseURL(baseURL)
@@ -876,7 +884,7 @@ func startSaveAndLaunch() {
 			return
 		}
 		defaultModel := chooseDefaultModel(models, currentConfig.DefaultModel)
-		if err := saveApplicationConfig(baseURL, apiKey, models, defaultModel); err != nil {
+		if err := saveApplicationConfig(baseURL, apiKey, models, defaultModel, preserveAuth); err != nil {
 			postUpdate(uiUpdate{Error: fmt.Errorf("保存程序配置失败：%w", err), Done: true})
 			return
 		}
@@ -887,7 +895,7 @@ func startSaveAndLaunch() {
 			return
 		}
 		postUpdate(uiUpdate{Status: "正在写入官方 Codex 供应商配置…"})
-		if err := writeCodexProviderConfig(codexProxyBase, defaultModel); err != nil {
+		if err := writeCodexProviderConfigWithPreference(codexProxyBase, defaultModel, preserveAuth); err != nil {
 			stopAPIProxy(proxy)
 			postUpdate(uiUpdate{Error: err, Done: true})
 			return
@@ -1188,16 +1196,17 @@ func loadSavedConfiguration() {
 	}
 }
 
-func saveApplicationConfig(baseURL, apiKey string, models []string, defaultModel string) error {
+func saveApplicationConfig(baseURL, apiKey string, models []string, defaultModel string, preserveAuth bool) error {
 	encrypted, err := encryptText(apiKey)
 	if err != nil {
 		return err
 	}
 	config := appConfig{
-		BaseURL:      baseURL,
-		EncryptedKey: encrypted,
-		Models:       append([]string(nil), models...),
-		DefaultModel: defaultModel,
+		BaseURL:             baseURL,
+		EncryptedKey:        encrypted,
+		Models:              append([]string(nil), models...),
+		DefaultModel:        defaultModel,
+		PreserveChatGPTAuth: &preserveAuth,
 	}
 	body, err := json.MarshalIndent(config, "", "  ")
 	if err != nil {
@@ -1255,6 +1264,10 @@ func decryptText(encoded string) (string, error) {
 }
 
 func writeCodexProviderConfig(baseURL, model string) error {
+	return writeCodexProviderConfigWithPreference(baseURL, model, chatGPTAuthPreference(currentConfig.PreserveChatGPTAuth))
+}
+
+func writeCodexProviderConfigWithPreference(baseURL, model string, preserveAuth bool) error {
 	codexHome, err := effectiveCodexHome()
 	if err != nil {
 		return err
@@ -1271,10 +1284,6 @@ func writeCodexProviderConfig(baseURL, model string) error {
 		if err := backupCodexConfig(existing); err != nil {
 			return err
 		}
-	}
-	preserveAuth, err := preserveChatGPTAuth(codexHome, string(existing))
-	if err != nil {
-		return err
 	}
 	updated := updateCodexConfigWithAuth(string(existing), baseURL, model, preserveAuth)
 	if err := os.WriteFile(configPath, []byte(updated), 0600); err != nil {

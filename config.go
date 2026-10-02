@@ -17,14 +17,15 @@ import (
 const (
 	defaultBaseURL = "https://api.velyn65.com/v1"
 	providerID     = "yunqiao_bridge"
-	appVersion     = "1.5.16"
+	appVersion     = "1.5.17"
 )
 
 type appConfig struct {
-	BaseURL      string   `json:"base_url"`
-	EncryptedKey string   `json:"encrypted_key"`
-	Models       []string `json:"models"`
-	DefaultModel string   `json:"default_model"`
+	BaseURL             string   `json:"base_url"`
+	EncryptedKey        string   `json:"encrypted_key"`
+	Models              []string `json:"models"`
+	DefaultModel        string   `json:"default_model"`
+	PreserveChatGPTAuth *bool    `json:"preserve_chatgpt_auth,omitempty"`
 }
 
 func normalizeBaseURL(raw string) (string, error) {

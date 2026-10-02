@@ -4,7 +4,7 @@
 
 启动器读取有效 CODEX_HOME（未设置时为用户目录 .codex），不写入、删除或复制 auth.json，不更换认证目录。CODEX_HOME 必须是绝对路径。设置 CODEX_HOME 时直接启动可执行文件，使客户端继承相同环境，而不是依赖应用包激活环境。
 
-检测 auth.json 中的 ChatGPT access_token 后，为本机桥接开启 requires_openai_auth。已有的 true 值始终保留，包括保存在系统凭据库的登录。纯中转 Key 用户无登录时仍使用 false。若登录只保存在系统凭据库，应在有效 CODEX_HOME/config.toml 的 [model_providers.yunqiao_bridge] 中设置 requires_openai_auth = true；此值重启后不会被覆盖。此开关只允许用于启动器的本机桥接地址。
+启动器中的“保留 ChatGPT 登录（浏览器扩展）”默认开启，并存入启动器 config.json 的 preserve_chatgpt_auth。以前的 false 值会在下次点击“保存并启动 Codex”时修正；系统凭据库登录不再依赖 auth.json 检测。纯中转 Key 且无官方登录的用户可取消勾选。此开关只允许用于启动器的本机桥接地址。
 
 代理覆盖 Authorization，并删除 Cookie、ChatGPT-Account-ID、OpenAI-Organization、OpenAI-Project、Proxy-Authorization、X-API-Key、Sec-WebSocket-Protocol，避免把客户端登录信息转发给模型服务。
 
