@@ -15,55 +15,82 @@ permissions:
 
 jobs:
   release:
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.26.x"
+          go-version: '1.26.x'
+          cache: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
       - name: Resolve release version
         id: version
-        shell: bash
+        shell: pwsh
         run: |
-          version="$(sed -n 's/.*appVersion[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' config.go | head -1)"
-          test -n "$version"
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+          $match = Select-String -Path config.go -Pattern 'appVersion\s*=\s*"([^"]+)"' | Select-Object -First 1
+          if (-not $match) { throw "appVersion not found" }
+          $version = $match.Matches.Groups[1].Value
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "tag=v$version" >> $env:GITHUB_OUTPUT
       - name: Check existing release
         id: existing
+        shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ steps.version.outputs.tag }}
-        shell: bash
         run: |
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
-          fi
-      - name: Test
+          gh release view "v${{ steps.version.outputs.version }}" *> $null
+          if ($LASTEXITCODE -eq 0) { "exists=true" >> $env:GITHUB_OUTPUT }
+          else { "exists=false" >> $env:GITHUB_OUTPUT }
+      - name: Build frontend
         if: steps.existing.outputs.exists != 'true'
-        run: go test ./...
-      - name: Build Windows x64
-        if: steps.existing.outputs.exists != 'true'
-        env:
-          GOOS: windows
-          GOARCH: amd64
-          CGO_ENABLED: "0"
+        working-directory: frontend
         run: |
-          go build -buildvcs=false -trimpath -ldflags="-s -w -H=windowsgui" -o /tmp/YunqiaoCodexBridge.exe .
-          cd /tmp
-          sha256sum YunqiaoCodexBridge.exe > YunqiaoCodexBridge.exe.sha256
+          npm ci
+          npm audit --audit-level=moderate
+          npm run build
+      - name: Resolve Go dependencies and test
+        if: steps.existing.outputs.exists != 'true'
+        run: |
+          go mod tidy
+          go test ./...
+      - name: Install Wails build tools
+        if: steps.existing.outputs.exists != 'true'
+        run: |
+          go install github.com/wailsapp/wails/v2/cmd/wails@v2.10.1
+          go install github.com/josephspurrier/goversioninfo/cmd/goversioninfo@v1.5.0
+          goversioninfo -64 -o versioninfo_windows_amd64.syso
+      - name: Build Windows x64 client
+        if: steps.existing.outputs.exists != 'true'
+        shell: pwsh
+        run: |
+          wails build -clean -nopackage -platform windows/amd64 -webview2 download -trimpath -ldflags "-s -w -H=windowsgui" -o YunqiaoCodexBridge.exe
+          $exe = (Resolve-Path build/bin/YunqiaoCodexBridge.exe).Path
+          $product = (Get-Item $exe).VersionInfo
+          if ($product.ProductVersion -notlike "${{ steps.version.outputs.version }}*") { throw "Version resource mismatch: $($product.ProductVersion)" }
+      - name: Microsoft Defender scan
+        if: steps.existing.outputs.exists != 'true'
+        shell: pwsh
+        run: |
+          $exe = (Resolve-Path build/bin/YunqiaoCodexBridge.exe).Path
+          Update-MpSignature
+          Start-MpScan -ScanType CustomScan -ScanPath $exe
+          $detections = Get-MpThreatDetection | Where-Object { $_.Resources -match [regex]::Escape($exe) }
+          if ($detections) {
+            $detections | Format-List *
+            throw 'Microsoft Defender reported a detection. Release withheld.'
+          }
       - name: Publish GitHub release
         if: steps.existing.outputs.exists != 'true'
+        shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ steps.version.outputs.tag }}
-          VERSION: ${{ steps.version.outputs.version }}
         run: |
-          gh release create "$TAG" \
-            /tmp/YunqiaoCodexBridge.exe \
-            /tmp/YunqiaoCodexBridge.exe.sha256 \
-            --target "$GITHUB_SHA" \
-            --title "云桥（熙楠）$TAG" \
-            --notes-file "RELEASE_NOTES_v$VERSION.md"
+          $exe = (Resolve-Path build/bin/YunqiaoCodexBridge.exe).Path
+          $sum = (Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$sum  YunqiaoCodexBridge.exe" | Set-Content -Encoding utf8 build/bin/YunqiaoCodexBridge.exe.sha256
+          gh release create "v${{ steps.version.outputs.version }}" $exe build/bin/YunqiaoCodexBridge.exe.sha256 --target "$env:GITHUB_SHA" --title "云桥（熙楠）v${{ steps.version.outputs.version }}" --notes-file "RELEASE_NOTES_v${{ steps.version.outputs.version }}.md"
+          if ($LASTEXITCODE -ne 0) { throw "Release publication failed" }

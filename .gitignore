@@ -5,3 +5,7 @@ YunqiaoCodexBridge-v*.exe
 .tools/
 *.sha256
 latest.json
+
+frontend/node_modules/
+frontend/dist/
+versioninfo_windows_amd64.syso
