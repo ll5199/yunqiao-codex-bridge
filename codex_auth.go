@@ -1,9 +1,7 @@
 package main
 
 import (
-	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -43,27 +41,10 @@ func bridgeRequiresAuth(config string) bool {
 	return false
 }
 
-func preserveChatGPTAuth(home, config string) (bool, error) {
-	// Explicit opt-in also supports credentials held only in the OS keyring.
-	if bridgeRequiresAuth(config) {
-		return true, nil
-	}
-	data, err := os.ReadFile(filepath.Join(home, "auth.json"))
-	if errors.Is(err, os.ErrNotExist) {
-		return false, nil
-	}
-	if err != nil {
-		return false, fmt.Errorf("无法检查 Codex 登录状态：%w", err)
-	}
-	var auth struct {
-		Tokens *struct {
-			AccessToken string `json:"access_token"`
-		} `json:"tokens"`
-	}
-	if err := json.Unmarshal(data, &auth); err != nil {
-		return false, errors.New("Codex auth.json 格式无效；未修改认证文件")
-	}
-	return auth.Tokens != nil && strings.TrimSpace(auth.Tokens.AccessToken) != "", nil
+// Older launcher configurations did not record this preference. Enable browser
+// compatibility on upgrade; users without a native login can opt out in the UI.
+func chatGPTAuthPreference(selected *bool) bool {
+	return selected == nil || *selected
 }
 
 func setRelayAuthorization(request *http.Request, relayKey string) {

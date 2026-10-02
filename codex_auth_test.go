@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -8,20 +9,19 @@ import (
 	"testing"
 )
 
-func TestChatGPTAuthSurvivesRepeatedConfigGeneration(t *testing.T) {
+func TestChatGPTAuthPreferenceSurvivesRepeatedConfigGeneration(t *testing.T) {
 	home := t.TempDir()
 	credentials := []byte(`{"tokens":{"access_token":"private-chatgpt-token"}}`)
 	path := filepath.Join(home, "auth.json")
 	if err := os.WriteFile(path, credentials, 0600); err != nil {
 		t.Fatal(err)
 	}
-	config := "cli_auth_credentials_store = \"auto\"\n"
+	// A prior version left false while native login was held in the system keyring.
+	config := "cli_auth_credentials_store = \"keyring\"\n"
+	enabled := true
+	saved := appConfig{PreserveChatGPTAuth: &enabled}
 	for i := 0; i < 3; i++ {
-		enabled, err := preserveChatGPTAuth(home, config)
-		if err != nil || !enabled {
-			t.Fatalf("auth detection: %v %v", enabled, err)
-		}
-		config = updateCodexConfigWithAuth(config, codexProxyBase, "smart-auto", enabled)
+		config = updateCodexConfigWithAuth(config, codexProxyBase, "smart-auto", *saved.PreserveChatGPTAuth)
 		if !bridgeRequiresAuth(config) || strings.Count(config, "[model_providers.yunqiao_bridge]") != 1 {
 			t.Fatal(config)
 		}
@@ -33,6 +33,13 @@ func TestChatGPTAuthSurvivesRepeatedConfigGeneration(t *testing.T) {
 			t.Fatal(err)
 		}
 		config = string(data)
+		appData, err := json.Marshal(saved)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := json.Unmarshal(appData, &saved); err != nil {
+			t.Fatal(err)
+		}
 	}
 	actual, _ := os.ReadFile(path)
 	if string(actual) != string(credentials) {
@@ -41,13 +48,10 @@ func TestChatGPTAuthSurvivesRepeatedConfigGeneration(t *testing.T) {
 	if strings.Contains(config, "private-chatgpt-token") {
 		t.Fatal("credential leaked into config")
 	}
-	// A keyring user can opt in without an auth.json file.
-	if err := os.Remove(path); err != nil {
-		t.Fatal(err)
-	}
-	enabled, err := preserveChatGPTAuth(home, config)
-	if err != nil || !enabled {
-		t.Fatal("explicit auth lost")
+	disabled := false
+	config = updateCodexConfigWithAuth(config, codexProxyBase, "smart-auto", disabled)
+	if bridgeRequiresAuth(config) {
+		t.Fatal("explicit disable ignored")
 	}
 }
 
@@ -77,6 +81,20 @@ func TestAuthCannotTargetExternalProvider(t *testing.T) {
 	config := updateCodexConfigWithAuth("", "https://example.com/v1", "test", true)
 	if bridgeRequiresAuth(config) {
 		t.Fatal("OpenAI auth enabled for external endpoint")
+	}
+}
+
+func TestChatGPTAuthPreferenceUpgradeAndOptOut(t *testing.T) {
+	if !chatGPTAuthPreference(nil) {
+		t.Fatal("upgrade must keep browser auth")
+	}
+	enabled := true
+	if !chatGPTAuthPreference(&enabled) {
+		t.Fatal("stored enable lost")
+	}
+	disabled := false
+	if chatGPTAuthPreference(&disabled) {
+		t.Fatal("stored opt out lost")
 	}
 }
 
