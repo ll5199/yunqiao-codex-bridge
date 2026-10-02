@@ -1,0 +1,23 @@
+name: Check Yunqiao update manifest
+on:
+  push:
+    paths:
+      - .github/workflows/check-update-manifest.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fetch and inspect live update manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --show-error --silent --location --max-time 30 --output latest.json --write-out 'HTTP %{http_code}\nFinal URL %{url_effective}\n' https://index.velyn65.com/download/latest.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          manifest = json.loads(Path("latest.json").read_text())
+          print(json.dumps({key: manifest.get(key) for key in ("version", "download_url", "sha256", "notes")}, ensure_ascii=False, indent=2))
+          PY
