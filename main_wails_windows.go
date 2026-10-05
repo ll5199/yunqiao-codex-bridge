@@ -40,7 +40,6 @@ type bridgeViewState struct {
 	HasAPIKey      bool            `json:"hasAPIKey"`
 	Models         []string        `json:"models"`
 	SelectedModel  string          `json:"selectedModel"`
-	PreserveChatGPTAuth bool       `json:"preserveChatGPTAuth"`
 	Version        string          `json:"version"`
 	Status         string          `json:"status"`
 	Connection     string          `json:"connection"`
@@ -96,11 +95,6 @@ func (app *BridgeApp) startup(ctx context.Context) {
 	app.ctx = ctx
 	app.mu.Unlock()
 	loadSavedConfiguration()
-	// Earlier launchers could persist false while the user expected browser login.
-	// Enable it once on migration; future explicit choices carry AuthPreferenceSet.
-	if !currentConfig.AuthPreferenceSet {
-		currentConfig.PreserveChatGPTAuth = nil
-	}
 	key, err := decryptText(currentConfig.EncryptedKey)
 	app.mu.Lock()
 	app.baseURL = currentConfig.BaseURL
@@ -146,7 +140,6 @@ func (app *BridgeApp) GetState() bridgeViewState {
 		HasAPIKey:     app.apiKey != "",
 		Models:        append([]string(nil), app.models...),
 		SelectedModel: app.model,
-		PreserveChatGPTAuth: chatGPTAuthPreference(currentConfig.PreserveChatGPTAuth),
 		Version:       appVersion,
 		Status:        app.status,
 		Connection:    connection,
@@ -172,7 +165,7 @@ func (app *BridgeApp) FetchModels(baseURL, apiKey string) (modelFetchResult, err
 	return modelFetchResult{BaseURL: resolved, Models: models}, nil
 }
 
-func (app *BridgeApp) SaveConnection(baseURL, apiKey, selectedModel string, preserveAuth bool) (bridgeViewState, error) {
+func (app *BridgeApp) SaveConnection(baseURL, apiKey, selectedModel string) (bridgeViewState, error) {
 	app.opMu.Lock()
 	defer app.opMu.Unlock()
 	apiKey = app.resolveAPIKey(apiKey)
@@ -184,7 +177,7 @@ func (app *BridgeApp) SaveConnection(baseURL, apiKey, selectedModel string, pres
 	if !containsString(models, selectedModel) {
 		selectedModel = chooseDefaultModel(models, app.model)
 	}
-	if err := saveApplicationConfig(resolved, apiKey, models, selectedModel, preserveAuth); err != nil {
+	if err := saveApplicationConfig(resolved, apiKey, models, selectedModel, false); err != nil {
 		return bridgeViewState{}, fmt.Errorf("保存配置失败：%w", err)
 	}
 	app.mu.Lock()
@@ -255,29 +248,16 @@ func (app *BridgeApp) LogoutCloud() cloudViewState {
 	return state
 }
 
-func (app *BridgeApp) SetChatGPTAuthPreference(enabled bool) (bridgeViewState, error) {
-	app.opMu.Lock()
-	defer app.opMu.Unlock()
-	app.mu.Lock()
-	baseURL, apiKey := app.baseURL, app.apiKey
-	models := append([]string(nil), app.models...)
-	app.mu.Unlock()
-	if err := saveApplicationConfig(baseURL, apiKey, models, smartRouterModel, enabled); err != nil {
-		return bridgeViewState{}, fmt.Errorf("保存认证设置失败：%w", err)
-	}
-	return app.GetState(), nil
-}
-
-func (app *BridgeApp) Launch(connection, provider, selectedModel, baseURL, apiKey string, preserveAuth bool) (string, error) {
+func (app *BridgeApp) Launch(connection, provider, selectedModel, baseURL, apiKey string) (string, error) {
 	app.opMu.Lock()
 	defer app.opMu.Unlock()
 	if connection == "official" {
 		return app.launchOfficial()
 	}
-	return app.launchRouted(connection, provider, selectedModel, baseURL, apiKey, preserveAuth)
+	return app.launchRouted(connection, provider, selectedModel, baseURL, apiKey)
 }
 
-func (app *BridgeApp) launchRouted(connection, provider, selectedModel, baseURL, apiKey string, preserveAuth bool) (string, error) {
+func (app *BridgeApp) launchRouted(connection, provider, selectedModel, baseURL, apiKey string) (string, error) {
 	if connection == "bridge" {
 		app.mu.Lock()
 		apiKey = app.entitlements.ProviderKeys[provider]
@@ -294,7 +274,7 @@ func (app *BridgeApp) launchRouted(connection, provider, selectedModel, baseURL,
 			}
 			baseURL, models = resolved, fetched
 		}
-		return app.launchWithCredentials(baseURL, apiKey, models, selectedModel, preserveAuth, false)
+		return app.launchWithCredentials(baseURL, apiKey, models, selectedModel, false)
 	}
 	if connection != "api" {
 		return "", errors.New("未知的连接方式")
@@ -304,10 +284,10 @@ func (app *BridgeApp) launchRouted(connection, provider, selectedModel, baseURL,
 	if err != nil {
 		return "", err
 	}
-	return app.launchWithCredentials(resolved, apiKey, models, selectedModel, preserveAuth, true)
+	return app.launchWithCredentials(resolved, apiKey, models, selectedModel, true)
 }
 
-func (app *BridgeApp) launchWithCredentials(baseURL, apiKey string, models []string, selectedModel string, preserveAuth, persistAPI bool) (string, error) {
+func (app *BridgeApp) launchWithCredentials(baseURL, apiKey string, models []string, selectedModel string, persistAPI bool) (string, error) {
 	models = withSmartRouterModel(models)
 	selectedModel = strings.TrimSpace(selectedModel)
 	if !containsString(models, selectedModel) {
@@ -325,7 +305,7 @@ func (app *BridgeApp) launchWithCredentials(baseURL, apiKey string, models []str
 		savedModels = append([]string(nil), app.models...)
 		app.mu.Unlock()
 	}
-	if err := saveApplicationConfig(savedURL, savedKey, savedModels, smartRouterModel, preserveAuth); err != nil {
+	if err := saveApplicationConfig(savedURL, savedKey, savedModels, smartRouterModel, false); err != nil {
 		return "", fmt.Errorf("保存配置失败：%w", err)
 	}
 	if persistAPI {
@@ -348,7 +328,7 @@ func (app *BridgeApp) launchWithCredentials(baseURL, apiKey string, models []str
 	}()
 
 	app.setStatus("正在准备 Codex 供应商配置…")
-	if err := writeCodexProviderConfigWithPreference(codexProxyBase, selectedModel, preserveAuth); err != nil {
+	if err := writeCodexProviderConfig(codexProxyBase, selectedModel); err != nil {
 		return "", err
 	}
 	install, err := findCodexInstallation()

@@ -41,10 +41,9 @@ func bridgeRequiresAuth(config string) bool {
 	return false
 }
 
-// Older launcher configurations did not record this preference. Enable browser
-// compatibility on upgrade; users without a native login can opt out in the UI.
+// Deprecated preferences are ignored: relay mode uses the configured API Key.
 func chatGPTAuthPreference(selected *bool) bool {
-	return selected == nil || *selected
+	return false
 }
 
 func setRelayAuthorization(request *http.Request, relayKey string) {

@@ -25,8 +25,7 @@ export function App() {
   const [password, setPassword] = useState("");
   const [cloud, setCloud] = useState(emptyCloud);
   const [provider, setProvider] = useState("");
-  const [version, setVersion] = useState("1.6.0");
-  const [preserveAuth, setPreserveAuth] = useState(true);
+  const [version, setVersion] = useState("1.6.1");
 
   function showError(error) {
     const message = error?.message || String(error || "操作失败");
@@ -48,8 +47,7 @@ export function App() {
       setSaved(Boolean(state.hasAPIKey));
       setApiModels(found);
       setModel(found.includes(autoModel) ? autoModel : state.selectedModel || autoModel);
-      setVersion(state.version || "1.6.0");
-      setPreserveAuth(Boolean(state.preserveChatGPTAuth));
+      setVersion(state.version || "1.6.1");
       setStatus(state.status || "准备就绪");
       setCloud(state.cloud || emptyCloud);
     }).catch(showError);
@@ -70,7 +68,7 @@ export function App() {
     setBusy(true);
     setNotice("");
     try {
-      const state = await app.SaveConnection(apiUrl, apiKey, autoModel, preserveAuth);
+      const state = await app.SaveConnection(apiUrl, apiKey, autoModel);
       const found = state.models || [];
       setApiUrl(state.baseURL);
       setApiModels(found);
@@ -138,7 +136,7 @@ export function App() {
     setNotice("");
     setStatus("正在启动 Codex…");
     try {
-      const result = await app.Launch(connection, provider, model, apiUrl, apiKey, preserveAuth);
+      const result = await app.Launch(connection, provider, model, apiUrl, apiKey);
       setStatus(result || "Codex 已启动。");
     } catch (error) {
       showError(error);
@@ -167,21 +165,6 @@ export function App() {
     }
   }
 
-  async function changeAuthPreference(enabled) {
-    const app = backend();
-    if (!app) return showError(new Error("客户端服务尚未启动"));
-    setBusy(true);
-    setNotice("");
-    try {
-      const state = await app.SetChatGPTAuthPreference(enabled);
-      setPreserveAuth(Boolean(state.preserveChatGPTAuth));
-      setStatus("ChatGPT 登录兼容设置已保存。");
-    } catch (error) {
-      showError(error);
-    } finally {
-      setBusy(false);
-    }
-  }
 
   const fetched = connection === "api" ? apiModels : connection === "bridge" ? providerModels : [];
   const modelOptions = fetched.length ? [autoModel, ...fetched.filter((item) => item !== autoModel)] : [];
@@ -232,7 +215,6 @@ export function App() {
       <section className="settings-modal" role="dialog" aria-modal="true" aria-labelledby="settings-heading">
         <div className="modal-heading"><h2 id="settings-heading">客户端设置</h2><button className="icon-button" aria-label="关闭设置" onClick={() => setShowSettings(false)}><X size={20} /></button></div>
         <div className="setting-item"><div><strong>客户端版本</strong><span>当前版本 v{version}</span></div><button className="text-button" onClick={checkUpdates} disabled={busy}>检查更新</button></div>
-        <label className="setting-item auth-preference"><span><strong>保留 ChatGPT 登录</strong><small>用于 Chrome / Edge 浏览器扩展；中转请求仍使用云桥 Key</small></span><input type="checkbox" checked={preserveAuth} onChange={(event) => changeAuthPreference(event.target.checked)} disabled={busy} /></label>
         <div className="setting-item"><div><strong>本机连接</strong><span>代理仅在本机运行，退出客户端后停止</span></div></div>
         <div className="setting-item"><div><strong>API Key 保护</strong><span>使用 Windows DPAPI 加密保存在本机</span></div></div>
       </section>

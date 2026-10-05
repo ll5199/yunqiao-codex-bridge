@@ -3,13 +3,13 @@
     "FileVersion": {
       "Major": 1,
       "Minor": 6,
-      "Patch": 0,
+      "Patch": 1,
       "Build": 0
     },
     "ProductVersion": {
       "Major": 1,
       "Minor": 6,
-      "Patch": 0,
+      "Patch": 1,
       "Build": 0
     },
     "FileFlagsMask": "3f",
@@ -22,14 +22,14 @@
     "Comments": "Cloud Codex connection client",
     "CompanyName": "Yunqiao",
     "FileDescription": "Yunqiao Codex Bridge",
-    "FileVersion": "1.6.0.0",
+    "FileVersion": "1.6.1.0",
     "InternalName": "YunqiaoCodexBridge",
     "LegalCopyright": "Copyright Yunqiao",
     "LegalTrademarks": "",
     "OriginalFilename": "YunqiaoCodexBridge.exe",
     "PrivateBuild": "",
     "ProductName": "Yunqiao Codex Bridge",
-    "ProductVersion": "1.6.0.0",
+    "ProductVersion": "1.6.1.0",
     "SpecialBuild": ""
   },
   "VarFileInfo": {

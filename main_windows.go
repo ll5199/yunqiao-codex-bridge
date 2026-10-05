@@ -1197,6 +1197,7 @@ func loadSavedConfiguration() {
 }
 
 func saveApplicationConfig(baseURL, apiKey string, models []string, defaultModel string, preserveAuth bool) error {
+	preserveAuth = false
 	encrypted, err := encryptText(apiKey)
 	if err != nil {
 		return err

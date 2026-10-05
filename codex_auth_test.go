@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-func TestChatGPTAuthPreferenceSurvivesRepeatedConfigGeneration(t *testing.T) {
+func TestRelayConfigIgnoresLegacyLoginPreference(t *testing.T) {
 	home := t.TempDir()
 	credentials := []byte(`{"tokens":{"access_token":"private-chatgpt-token"}}`)
 	path := filepath.Join(home, "auth.json")
@@ -22,7 +22,7 @@ func TestChatGPTAuthPreferenceSurvivesRepeatedConfigGeneration(t *testing.T) {
 	saved := appConfig{PreserveChatGPTAuth: &enabled}
 	for i := 0; i < 3; i++ {
 		config = updateCodexConfigWithAuth(config, codexProxyBase, "smart-auto", *saved.PreserveChatGPTAuth)
-		if !bridgeRequiresAuth(config) || strings.Count(config, "[model_providers.yunqiao_bridge]") != 1 {
+		if bridgeRequiresAuth(config) || strings.Count(config, "[model_providers.yunqiao_bridge]") != 1 {
 			t.Fatal(config)
 		}
 		if err := os.WriteFile(filepath.Join(home, "config.toml"), []byte(config), 0600); err != nil {
@@ -84,17 +84,12 @@ func TestAuthCannotTargetExternalProvider(t *testing.T) {
 	}
 }
 
-func TestChatGPTAuthPreferenceUpgradeAndOptOut(t *testing.T) {
-	if !chatGPTAuthPreference(nil) {
-		t.Fatal("upgrade must keep browser auth")
-	}
-	enabled := true
-	if !chatGPTAuthPreference(&enabled) {
-		t.Fatal("stored enable lost")
-	}
-	disabled := false
-	if chatGPTAuthPreference(&disabled) {
-		t.Fatal("stored opt out lost")
+func TestLegacyAuthPreferenceDisabled(t *testing.T) {
+	enabled, disabled := true, false
+	for _, selected := range []*bool{nil, &enabled, &disabled} {
+		if chatGPTAuthPreference(selected) {
+			t.Fatal("legacy login preference must be ignored")
+		}
 	}
 }
 

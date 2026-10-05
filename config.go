@@ -17,7 +17,7 @@ import (
 const (
 	defaultBaseURL = "https://api.velyn65.com/v1"
 	providerID     = "yunqiao_bridge"
-	appVersion     = "1.6.0"
+	appVersion     = "1.6.1"
 )
 
 type appConfig struct {
@@ -267,7 +267,7 @@ func updateCodexConfigWithAuth(existing, baseURL, model string, preserveAuth boo
 		`name = "Yunqiao API"`,
 		"base_url = " + strconv.Quote(strings.TrimRight(baseURL, "/")),
 		`wire_api = "responses"`,
-		"requires_openai_auth = " + strconv.FormatBool(preserveAuth && strings.TrimRight(baseURL, "/") == codexProxyBase),
+		`requires_openai_auth = false`,
 		endMarker,
 	}
 
