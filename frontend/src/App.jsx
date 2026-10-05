@@ -25,7 +25,7 @@ export function App() {
   const [password, setPassword] = useState("");
   const [cloud, setCloud] = useState(emptyCloud);
   const [provider, setProvider] = useState("");
-  const [version, setVersion] = useState("1.6.1");
+  const [version, setVersion] = useState("1.6.2");
 
   function showError(error) {
     const message = error?.message || String(error || "操作失败");
@@ -47,7 +47,7 @@ export function App() {
       setSaved(Boolean(state.hasAPIKey));
       setApiModels(found);
       setModel(found.includes(autoModel) ? autoModel : state.selectedModel || autoModel);
-      setVersion(state.version || "1.6.1");
+      setVersion(state.version || "1.6.2");
       setStatus(state.status || "准备就绪");
       setCloud(state.cloud || emptyCloud);
     }).catch(showError);
@@ -131,7 +131,6 @@ export function App() {
   async function launch() {
     const app = backend();
     if (!app) return showError(new Error("客户端服务尚未启动"));
-    if (!window.confirm("启动前会关闭已运行的 Codex 窗口并重新启动。继续吗？")) return;
     setBusy(true);
     setNotice("");
     setStatus("正在启动 Codex…");
@@ -175,7 +174,7 @@ export function App() {
   return <div className="desktop-shell">
     <header className="topbar">
       <div className="brand-lockup"><div className="brand-mark"><Link2 size={24} strokeWidth={2.8} /></div><strong>云桥</strong><span>Codex Bridge</span><i /><small>熙楠</small></div>
-      <div className="top-actions"><span className="connection-state"><span className={"status-dot " + (ready ? "" : "pending")} />{ready ? "连接正常" : "等待连接"}</span><button type="button" className="icon-button" aria-label="设置" title="设置" onClick={() => setShowSettings(true)}><Settings2 size={21} /></button><div className="window-controls"><button type="button" className="window-button" aria-label="最小化" onClick={() => window.runtime?.WindowMinimise?.()}><Minus size={19} /></button><button type="button" className="window-button" aria-label="最大化或还原" onClick={() => window.runtime?.WindowToggleMaximise?.()}><Square size={15} /></button><button type="button" className="window-button close" aria-label="关闭" onClick={() => window.runtime?.Quit?.()}><X size={18} /></button></div></div>
+      <div className="top-actions"><span className="connection-state"><span className={"status-dot " + (ready ? "" : "pending")} />{ready ? "连接正常" : "等待连接"}</span><button type="button" className="icon-button" aria-label="设置" title="设置" onClick={() => setShowSettings(true)}><Settings2 size={21} /></button><div className="window-controls"><button type="button" className="window-button" aria-label="最小化" onClick={() => window.runtime?.WindowMinimise?.()}><Minus size={19} /></button><button type="button" className="window-button" aria-label="最大化或还原" onClick={() => window.runtime?.WindowToggleMaximise?.()}><Square size={15} /></button><button type="button" className="window-button close" aria-label="关闭" onClick={() => backend()?.Close?.().catch(showError)}><X size={18} /></button></div></div>
     </header>
 
     <main className="workspace">

@@ -82,7 +82,6 @@ func main() {
 		AssetServer:      &assetserver.Options{Assets: wailsAssets},
 		OnStartup:        app.startup,
 		OnShutdown:       app.shutdown,
-		OnBeforeClose:    app.beforeClose,
 		Bind:             []interface{}{app},
 	})
 	if err != nil {
@@ -115,17 +114,9 @@ func (app *BridgeApp) shutdown(context.Context) {
 	stopActiveProxy()
 }
 
-func (app *BridgeApp) beforeClose(ctx context.Context) bool {
-	if !hasActiveProxy() {
-		return false
-	}
-	answer, err := wailsruntime.MessageDialog(ctx, wailsruntime.MessageDialogOptions{
-		Type:    wailsruntime.QuestionDialog,
-		Title:   "退出云桥客户端？",
-		Message: "Codex 正通过云桥连接中转 API。退出后当前对话会中断，确定退出吗？",
-		Buttons: []string{"继续使用", "退出"},
-	})
-	return err == nil && answer != "退出"
+// Close uses the bound Go API so the titlebar button has a reliable exit path.
+func (app *BridgeApp) Close() {
+	wailsruntime.Quit(app.context())
 }
 
 func (app *BridgeApp) GetState() bridgeViewState {
