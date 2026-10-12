@@ -51,13 +51,18 @@ jobs:
         working-directory: frontend
         run: |
           npm ci
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           npm audit --audit-level=moderate
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           npm run build
       - name: Resolve Go dependencies and test
         if: steps.existing.outputs.exists != 'true'
         run: |
           go mod tidy
           go test ./...
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          go vet -unsafeptr=false ./...
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Install Wails build tools
         if: steps.existing.outputs.exists != 'true'
         run: |
