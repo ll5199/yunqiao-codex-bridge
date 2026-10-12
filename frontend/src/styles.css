@@ -67,6 +67,7 @@ h2 { margin: 0; font-size: 16px; font-weight: 700; color: #16312b; }
 .model-hint { display: flex; align-items: center; gap: 9px; margin: 12px 0 0; color: #7a8880; font-size: 12px; }
 .model-hint .status-dot { width: 7px; height: 7px; }
 .launch-button { width: 100%; height: 61px; display: flex; align-items: center; justify-content: center; gap: 14px; margin-top: 25px; border: 0; border-radius: 9px; background: linear-gradient(100deg, #218554, #096c45); color: white; font-size: 20px; font-weight: 700; box-shadow: 0 5px 12px #0f624321; }
+.launch-button:disabled { background: #dce2df; color: #64716a; box-shadow: none; opacity: 1; cursor: not-allowed; }
 .launch-button:hover:not(:disabled) { background: #136842; }
 .launch-footnote { margin: 11px 0 0; color: #78877f; text-align: center; font-size: 12px; }
 .status-line { min-height: 30px; display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 0 35px 7px; color: #74857a; font-size: 11px; white-space: nowrap; }
