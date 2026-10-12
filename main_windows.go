@@ -3,6 +3,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -1357,31 +1358,16 @@ func findCodexInstallation() (codexInstallation, error) {
 		}
 	}
 
-	script := `$p = Get-AppxPackage | Where-Object { $_.Name -in @('OpenAI.Codex','OpenAI.CodexBeta') } | Sort-Object Version -Descending | Select-Object -First 1; if ($p) { $m = Get-AppxPackageManifest $p; $e = [string]$m.Package.Applications.Application.Executable; Write-Output ($p.InstallLocation + '|' + $p.PackageFamilyName + '|' + $e) }`
+	script := `$p = Get-AppxPackage | Where-Object { $_.Name -in @('OpenAI.Codex','OpenAI.CodexBeta') } | Sort-Object Version -Descending | Select-Object -First 1; if ($p) { $m = Get-AppxPackageManifest $p; ` + codexAppManifestSelectionScript + ` }`
 	command := exec.Command("powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script)
 	command.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
 	output, err := command.Output()
-	if err == nil {
-		parts := strings.Split(strings.TrimSpace(string(output)), "|")
-		if len(parts) == 3 && parts[1] != "" {
-			executable := ""
-			names := []string{parts[2], "Codex.exe", "ChatGPT.exe", "codex.exe"}
-			for _, name := range names {
-				if strings.TrimSpace(name) == "" {
-					continue
-				}
-				candidate := filepath.Join(parts[0], name)
-				if _, statErr := os.Stat(candidate); statErr == nil {
-					executable = candidate
-					break
-				}
-			}
-			if executable == "" && strings.TrimSpace(parts[2]) != "" {
-				executable = filepath.Join(parts[0], parts[2])
-			}
-			return codexInstallation{Executable: executable, AUMID: parts[1] + "!App"}, nil
-		}
+	if err == nil && len(strings.TrimSpace(string(output))) > 0 {
+		install, parseErr := parseCodexPackageInstallation(output)
+		if parseErr != nil { diagnosticLog("launch.package_invalid", parseErr.Error()); return codexInstallation{}, parseErr }
+		return install, nil
 	}
+	if err != nil { diagnosticLog("launch.package_query_failed", err.Error()) }
 	return codexInstallation{}, errors.New("未找到官方 Codex Windows 客户端，请先安装并至少直接启动一次")
 }
 
@@ -1601,4 +1587,18 @@ func waitForCodexDebug(timeout time.Duration) bool {
  deadline:=time.Now().Add(timeout)
  for time.Now().Before(deadline) { if targets,err:=listCDPTargets(client,cdpPort); err==nil { for _,t:=range targets { if t.WebSocketDebuggerURL!="" && (t.Type=="page" || t.Type=="webview") { return true } } }; time.Sleep(200*time.Millisecond) }
  return false
+}
+
+// Select one UI application before serializing; never cast all Executable nodes to a string.
+const codexAppManifestSelectionScript = `$ui = @($m.Package.Applications.Application) | Where-Object { ([string]$_.Executable) -match '(?i)(^|[\\/])(Codex|ChatGPT)\.exe$' } | Select-Object -First 1; if ($ui) { [PSCustomObject]@{ InstallLocation=[string]$p.InstallLocation; PackageFamilyName=[string]$p.PackageFamilyName; Executable=[string]$ui.Executable; AppID=[string]$ui.Id } | ConvertTo-Json -Compress }`
+
+func parseCodexPackageInstallation(output []byte) (codexInstallation, error) {
+ var pkg struct { InstallLocation string; PackageFamilyName string; Executable string; AppID string }
+ if err := json.Unmarshal(bytes.TrimPrefix(bytes.TrimSpace(output), []byte{0xef,0xbb,0xbf}), &pkg); err != nil { return codexInstallation{}, fmt.Errorf("Codex 应用包信息解析失败：%w",err) }
+ name:=strings.ToLower(filepath.Base(pkg.Executable))
+ if (name!="chatgpt.exe" && name!="codex.exe") || pkg.InstallLocation=="" || pkg.PackageFamilyName=="" || pkg.AppID=="" || filepath.IsAbs(pkg.Executable) { return codexInstallation{}, errors.New("Codex 应用包缺少有效主程序或应用 ID") }
+ executable:=filepath.Join(pkg.InstallLocation,pkg.Executable)
+ info,err:=os.Stat(executable)
+ if err!=nil || info.IsDir() { return codexInstallation{}, fmt.Errorf("Codex 主程序不存在：%s",executable) }
+ return codexInstallation{Executable:executable,AUMID:pkg.PackageFamilyName+"!"+pkg.AppID},nil
 }

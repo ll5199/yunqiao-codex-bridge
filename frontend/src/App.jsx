@@ -29,7 +29,7 @@ export function App() {
   const [cloud, setCloud] = useState(emptyCloud);
   const [provider, setProvider] = useState("");
   const [runtimeState, setRuntimeState] = useState({ running: false, proxyRunning: false });
-  const [version, setVersion] = useState("1.6.3");
+  const [version, setVersion] = useState("1.6.4");
 
   function showError(error) {
     const message = error?.message || String(error || "操作失败");
@@ -51,7 +51,7 @@ export function App() {
       setSaved(Boolean(state.hasAPIKey));
       setApiModels(found);
       setModel(found.includes(autoModel) ? autoModel : state.selectedModel || autoModel);
-      setVersion(state.version || "1.6.3");
+      setVersion(state.version || "1.6.4");
       setStatus(state.status || "准备就绪");
       setCloud(state.cloud || emptyCloud);
       setRuntimeState(state);
