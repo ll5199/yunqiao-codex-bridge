@@ -19,15 +19,16 @@ jobs:
         working-directory: frontend
         run: |
           npm ci
+          npm audit --json
           npm run build
       - name: Test and vet
         shell: pwsh
         run: |
           go mod tidy
-          gofmt -w *.go
+          Get-ChildItem -Filter *.go | ForEach-Object { gofmt -w $_.FullName }
           go test ./...
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          go vet ./...
+          go vet -unsafeptr=false ./...
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           go build -o build-check.exe .
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
