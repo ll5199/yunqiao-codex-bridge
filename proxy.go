@@ -29,6 +29,7 @@ type apiProxy struct {
 	server    *http.Server
 	store     *imageStore
 	activity  *requestActivityTracker
+ upstreamSnapshot func() string
 	done      chan struct{}
 	once      sync.Once
 	startedAt int64
@@ -53,7 +54,9 @@ func startAPIProxy(rawTarget, apiKey string, logger func(string, string), availa
 	policyManager := newRoutingPolicyManager(routingPolicyURL, routingPolicyCachePath(), logger)
 	smartRouter := newDynamicSmartRouter(policyManager, rawTarget, apiKey, logger, availableModels...)
 	transport.(*compatibilityTransport).fallbackModel = smartRouter.fallbackModel
-	reverse := &httputil.ReverseProxy{
+	var statusMu sync.Mutex
+ upstreamStatus:=""
+ reverse := &httputil.ReverseProxy{
 		FlushInterval: 30 * time.Millisecond,
 		Transport:     transport,
 		Director: func(request *http.Request) {
@@ -84,6 +87,7 @@ func startAPIProxy(rawTarget, apiKey string, logger func(string, string), availa
 			request.Header.Set("X-Yunqiao-Bridge", appVersion)
 		},
 		ModifyResponse: func(response *http.Response) error {
+ statusMu.Lock(); if response.StatusCode>=400 { upstreamStatus=fmt.Sprintf("上游请求失败（HTTP %d）",response.StatusCode) } else { upstreamStatus="" }; statusMu.Unlock()
 			if logger != nil {
 				logger("proxy.response", fmt.Sprintf(
 					"status=%d method=%s path=%s content_type=%s",
@@ -117,7 +121,8 @@ func startAPIProxy(rawTarget, apiKey string, logger func(string, string), availa
 			return nil
 		},
 		ErrorHandler: func(writer http.ResponseWriter, request *http.Request, proxyErr error) {
-			activity.finish(requestActivityID(request))
+			statusMu.Lock(); upstreamStatus="上游连接失败或超时"; statusMu.Unlock()
+ activity.finish(requestActivityID(request))
 			if logger != nil {
 				logger("proxy.error", proxyErr.Error())
 			}
@@ -188,6 +193,7 @@ func startAPIProxy(rawTarget, apiKey string, logger func(string, string), availa
 		ReadHeaderTimeout: 15 * time.Second,
 	}
 	proxy := &apiProxy{
+ upstreamSnapshot:func()string{statusMu.Lock();defer statusMu.Unlock();return upstreamStatus},
 		server: server, store: store, activity: activity, done: proxyDone,
 		startedAt: time.Now().UnixMilli(), logger: logger,
 	}

@@ -28,7 +28,8 @@ export function App() {
   const [password, setPassword] = useState("");
   const [cloud, setCloud] = useState(emptyCloud);
   const [provider, setProvider] = useState("");
-  const [version, setVersion] = useState("1.6.2");
+  const [runtimeState, setRuntimeState] = useState({ running: false, proxyRunning: false });
+  const [version, setVersion] = useState("1.6.3");
 
   function showError(error) {
     const message = error?.message || String(error || "操作失败");
@@ -50,12 +51,41 @@ export function App() {
       setSaved(Boolean(state.hasAPIKey));
       setApiModels(found);
       setModel(found.includes(autoModel) ? autoModel : state.selectedModel || autoModel);
-      setVersion(state.version || "1.6.2");
+      setVersion(state.version || "1.6.3");
       setStatus(state.status || "准备就绪");
       setCloud(state.cloud || emptyCloud);
+      setRuntimeState(state);
+      setLaunched(Boolean(state.running));
+      launchLocked.current = Boolean(state.running);
     }).catch(showError);
     return () => unsubscribe?.();
   }, []);
+
+  useEffect(() => {
+    const app = backend();
+    if (!app) return;
+    let active = true;
+    let pending = false;
+    const timer = setInterval(async () => {
+      if (pending || launching) return;
+      pending = true;
+      try {
+        const state = await app.GetState();
+        if (active) {
+          setRuntimeState(state);
+          setLaunched(Boolean(state.running));
+          launchLocked.current = Boolean(state.running);
+        }
+      } catch (_) { /* Keep the last known state during a transient bridge error. */ }
+      finally { pending = false; }
+    }, 2000);
+    return () => { active = false; clearInterval(timer); };
+  }, [launching]);
+
+  async function exportDiagnostics() {
+    try { const result = await backend()?.ExportDiagnostics(); if (result) setStatus(result); }
+    catch (error) { showError(error); }
+  }
 
   function chooseConnection(next) {
     setConnection(next);
@@ -183,7 +213,7 @@ export function App() {
   return <div className="desktop-shell">
     <header className="topbar">
       <div className="brand-lockup"><div className="brand-mark"><Link2 size={24} strokeWidth={2.8} /></div><strong>云桥</strong><span>Codex Bridge</span><i /><small>熙楠</small></div>
-      <div className="top-actions"><span className="connection-state"><span className={"status-dot " + (ready ? "" : "pending")} />{ready ? "连接正常" : "等待连接"}</span><button type="button" className="icon-button" aria-label="设置" title="设置" onClick={() => setShowSettings(true)}><Settings2 size={21} /></button><div className="window-controls"><button type="button" className="window-button" aria-label="最小化" onClick={() => window.runtime?.WindowMinimise?.()}><Minus size={19} /></button><button type="button" className="window-button" aria-label="最大化或还原" onClick={() => window.runtime?.WindowToggleMaximise?.()}><Square size={15} /></button><button type="button" className="window-button close" aria-label="关闭" onClick={() => backend()?.Close?.().catch(showError)}><X size={18} /></button></div></div>
+      <div className="top-actions"><span className="connection-state"><span className={"status-dot " + (runtimeState.upstreamStatus || !ready ? "pending" : "")} />{runtimeState.upstreamStatus || (launched ? runtimeState.proxyRunning ? "Codex 与代理运行中" : "Codex 运行中" : runtimeState.proxyRunning ? "代理运行中" : ready ? "配置已就绪" : "等待配置")}</span><button type="button" className="icon-button" aria-label="设置" title="设置" onClick={() => setShowSettings(true)}><Settings2 size={21} /></button><div className="window-controls"><button type="button" className="window-button" aria-label="最小化" onClick={() => window.runtime?.WindowMinimise?.()}><Minus size={19} /></button><button type="button" className="window-button" aria-label="最大化或还原" onClick={() => window.runtime?.WindowToggleMaximise?.()}><Square size={15} /></button><button type="button" className="window-button close" aria-label="关闭" onClick={() => backend()?.Close?.().catch(showError)}><X size={18} /></button></div></div>
     </header>
 
     <main className="workspace">
@@ -215,7 +245,7 @@ export function App() {
       </section>}
 
       <button type="button" className="launch-button" onClick={launch} disabled={busy || launched || !ready}><Play size={22} fill="currentColor" strokeWidth={1.5} />{launched ? "Codex 已启动" : launching ? "正在启动…" : busy ? "正在处理…" : "启动 Codex"}</button>
-      <p className="launch-footnote">{launched ? "Codex 已启动，请保持云桥客户端运行。" : ready ? "已准备就绪，将使用所选配置启动 Codex CLI。" : "请先完成连接配置"}</p>
+      <p className="launch-footnote">{launched ? "Codex 已启动，请保持云桥客户端运行。修改连接或模型将在下次启动生效。" : ready ? "已准备就绪，将使用所选配置启动 Codex CLI。" : "请先完成连接配置"}</p>
     </main>
 
     <footer className="status-line" role="status" aria-live="polite"><span>{status}</span><span>云桥客户端 v{version}</span></footer>
@@ -223,6 +253,7 @@ export function App() {
       <section className="settings-modal" role="dialog" aria-modal="true" aria-labelledby="settings-heading">
         <div className="modal-heading"><h2 id="settings-heading">客户端设置</h2><button className="icon-button" aria-label="关闭设置" onClick={() => setShowSettings(false)}><X size={20} /></button></div>
         <div className="setting-item"><div><strong>客户端版本</strong><span>当前版本 v{version}</span></div><button className="text-button" onClick={checkUpdates} disabled={busy}>检查更新</button></div>
+        <div className="setting-item"><div><strong>诊断日志</strong><span>导出启动和更新记录，自动隐藏凭据</span></div><button className="text-button" onClick={exportDiagnostics}>导出诊断</button></div>
         <div className="setting-item"><div><strong>本机连接</strong><span>代理仅在本机运行，退出客户端后停止</span></div></div>
         <div className="setting-item"><div><strong>API Key 保护</strong><span>使用 Windows DPAPI 加密保存在本机</span></div></div>
       </section>

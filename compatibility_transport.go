@@ -27,46 +27,39 @@ func newCompatibilityTransport(base http.RoundTripper, logger func(string, strin
 }
 
 func (transport *compatibilityTransport) RoundTrip(request *http.Request) (*http.Response, error) {
-	response, err := transport.roundTripOnce(request)
-	if err == nil && response != nil && response.StatusCode == http.StatusBadGateway &&
-		request.GetBody != nil && request.Header.Get("X-Yunqiao-Model") == smartRouteGrok {
-		if isGrokConcurrencyLimit(response) {
-			if transport.logger != nil {
-				transport.logger("protocol.retry", "family=grok reason=concurrency_limit delay="+transport.retryDelay.String())
-			}
-			if waitErr := waitForCompatibilityRetry(request, transport.retryDelay); waitErr != nil {
-				return nil, waitErr
-			}
-			retry, retryErr := cloneRequestWithBody(request)
-			if retryErr != nil {
-				return nil, retryErr
-			}
-			response, err = transport.roundTripOnce(retry)
-		}
-	}
-	if err != nil || response == nil || response.StatusCode != http.StatusServiceUnavailable ||
-		request.Header.Get("X-Yunqiao-Smart-Route") != "1" || request.GetBody == nil ||
-		transport.fallbackModel == nil {
-		return response, err
-	}
-
-	model, effort := transport.fallbackModel(request.Header.Get("X-Yunqiao-Model"))
-	if model == "" || model == request.Header.Get("X-Yunqiao-Model") {
-		return response, nil
-	}
-	retry, retryErr := smartRouteFallbackRequest(request, model, effort)
-	if retryErr != nil {
-		return response, nil
-	}
-	_ = response.Body.Close()
-	if transport.logger != nil {
-		transport.logger("router.fallback", fmt.Sprintf(
-			"from=%s to=%s reason=upstream_503",
-			safeLogID(request.Header.Get("X-Yunqiao-Model")), safeLogID(model),
-		))
-	}
-	return transport.roundTripOnce(retry)
+ // Never replay a successful response: its stream may already contain output or tool calls.
+ current:=request
+ for attempt:=0; ; attempt++ {
+  response,err:=transport.roundTripOnce(current)
+  if err!=nil || response==nil || current.GetBody==nil { return response,err }
+  retryable:=response.StatusCode==http.StatusTooManyRequests || response.StatusCode==http.StatusServiceUnavailable
+  if response.StatusCode==http.StatusBadGateway { retryable=isOverloadResponse(response) }
+  if !retryable || attempt>=2 { return response,nil }
+  next,cloneErr:=cloneRequestWithBody(current)
+  if cloneErr!=nil { return response,nil }
+  if attempt==0 && current.Header.Get("X-Yunqiao-Smart-Route")=="1" && transport.fallbackModel!=nil {
+   model,effort:=transport.fallbackModel(current.Header.Get("X-Yunqiao-Model"))
+   if model!="" && model!=current.Header.Get("X-Yunqiao-Model") {
+    if fallback,e:=smartRouteFallbackRequest(current,model,effort); e==nil { next=fallback }
+   }
+  }
+  delay:=transport.retryDelay*time.Duration(1<<attempt)
+  if transport.logger!=nil { transport.logger("protocol.retry",fmt.Sprintf("attempt=%d status=%d delay=%s",attempt+1,response.StatusCode,delay)) }
+  _=response.Body.Close()
+  if err:=waitForCompatibilityRetry(current,delay); err!=nil { _=next.Body.Close(); return nil,err }
+  current=next
+ }
 }
+
+func isOverloadResponse(response *http.Response) bool {
+ prefix,err:=io.ReadAll(io.LimitReader(response.Body,64<<10))
+ // Preserve the entire response, including any bytes beyond the inspected prefix.
+ response.Body=&prefixedResponseBody{Reader:io.MultiReader(bytes.NewReader(prefix),response.Body),Closer:response.Body}
+ if err!=nil { return false }
+ lower:=strings.ToLower(string(prefix))
+ return strings.Contains(lower,"concurrency limit") || strings.Contains(lower,"overloaded") || strings.Contains(lower,"concurrency slot")
+}
+type prefixedResponseBody struct { io.Reader; io.Closer }
 
 func isGrokConcurrencyLimit(response *http.Response) bool {
 	body, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
@@ -125,39 +118,7 @@ func (transport *compatibilityTransport) roundTripOnce(request *http.Request) (*
 		transport.gemini.Unlock()
 		return nil, err
 	}
-	if response.StatusCode == http.StatusTooManyRequests && request.GetBody != nil {
-		body, readErr := io.ReadAll(io.LimitReader(response.Body, 1<<20))
-		_ = response.Body.Close()
-		lower := strings.ToLower(string(body))
-		if readErr == nil && (strings.Contains(lower, "concurrency slot") || strings.Contains(lower, "resource_exhausted")) {
-			if transport.logger != nil {
-				transport.logger("protocol.retry", "family=gemini reason=concurrency_slot delay=3s")
-			}
-			timer := time.NewTimer(3 * time.Second)
-			select {
-			case <-request.Context().Done():
-				timer.Stop()
-				transport.gemini.Unlock()
-				return nil, request.Context().Err()
-			case <-timer.C:
-			}
-			retry := request.Clone(request.Context())
-			retry.Body, err = request.GetBody()
-			if err != nil {
-				transport.gemini.Unlock()
-				return nil, err
-			}
-			retry.GetBody = request.GetBody
-			response, err = transport.base.RoundTrip(retry)
-			if err != nil {
-				transport.gemini.Unlock()
-				return nil, err
-			}
-		} else {
-			response.Body = io.NopCloser(bytes.NewReader(body))
-			response.ContentLength = int64(len(body))
-		}
-	}
+
 	response.Body = &unlockingReadCloser{ReadCloser: response.Body, unlock: transport.gemini.Unlock}
 	return response, nil
 }

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+ "net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -1417,9 +1418,14 @@ func launchCodex(install codexInstallation) error {
 
 	arguments := fmt.Sprintf("--remote-debugging-port=%d --remote-allow-origins=http://127.0.0.1:%d --inspect=127.0.0.1:%d --lang=zh-CN", cdpPort, cdpPort, inspectorPort)
 	if install.AUMID != "" && strings.TrimSpace(os.Getenv("CODEX_HOME")) == "" {
-		if _, err := activateApplication(install.AUMID, arguments); err == nil {
-			return nil
-		}
+		if pid, err := activateApplication(install.AUMID, arguments); err == nil {
+            rememberCodexPID(pid)
+            diagnosticLog("launch.activation", fmt.Sprintf("pid=%d", pid))
+            if waitForCodexDebug(5*time.Second) { return nil }
+            diagnosticLog("launch.fallback", "activation did not open debug port; trying executable")
+            _ = kill.Run()
+            time.Sleep(800*time.Millisecond)
+        } else { diagnosticLog("launch.activation_failed", err.Error()) }
 	}
 	if install.Executable == "" {
 		return errors.New("已找到 Codex 应用包，但无法激活其调试模式")
@@ -1435,6 +1441,9 @@ func launchCodex(install codexInstallation) error {
 	if err := command.Start(); err != nil {
 		return fmt.Errorf("启动官方 Codex 失败：%w", err)
 	}
+ rememberCodexPID(uint32(command.Process.Pid))
+ diagnosticLog("launch.executable", fmt.Sprintf("pid=%d", command.Process.Pid))
+ _ = waitForCodexDebug(5*time.Second)
 	return nil
 }
 
@@ -1570,4 +1579,24 @@ func activateApplication(aumid, arguments string) (uint32, error) {
 		return 0, fmt.Errorf("激活官方 Codex 失败：0x%08X", uint32(hr))
 	}
 	return pid, nil
+}
+
+var codexProcessMu sync.Mutex
+var codexProcessPID uint32
+func rememberCodexPID(pid uint32) { codexProcessMu.Lock(); codexProcessPID=pid; codexProcessMu.Unlock() }
+func codexIsRunning() bool {
+ codexProcessMu.Lock(); pid:=codexProcessPID; codexProcessMu.Unlock()
+ if pid==0 { return false }
+ k:=syscall.NewLazyDLL("kernel32.dll")
+ h,_,_:=k.NewProc("OpenProcess").Call(0x1000,0,uintptr(pid))
+ if h==0 { return false }; defer k.NewProc("CloseHandle").Call(h)
+ var code uint32
+ ok,_,_:=k.NewProc("GetExitCodeProcess").Call(h,uintptr(unsafe.Pointer(&code)))
+ return ok!=0 && code==259
+}
+func waitForCodexDebug(timeout time.Duration) bool {
+ client:= &http.Client{Timeout:500*time.Millisecond}
+ deadline:=time.Now().Add(timeout)
+ for time.Now().Before(deadline) { if targets,err:=listCDPTargets(client,cdpPort); err==nil { for _,t:=range targets { if t.WebSocketDebuggerURL!="" && (t.Type=="page" || t.Type=="webview") { return true } } }; time.Sleep(200*time.Millisecond) }
+ return false
 }

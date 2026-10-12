@@ -753,7 +753,7 @@ func TestSmartRoute503FallsBackToAvailableLuna(t *testing.T) {
 	}
 }
 
-func TestManualModel503DoesNotFallback(t *testing.T) {
+func TestManualModel503RetriesWithoutChangingModel(t *testing.T) {
 	calls := 0
 	transport := newCompatibilityTransport(roundTripFunc(func(request *http.Request) (*http.Response, error) {
 		calls++
@@ -775,7 +775,7 @@ func TestManualModel503DoesNotFallback(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = response.Body.Close()
-	if calls != 1 || response.StatusCode != http.StatusServiceUnavailable {
+	if calls != 3 || response.StatusCode != http.StatusServiceUnavailable {
 		t.Fatalf("manual model was unexpectedly rerouted: calls=%d status=%d", calls, response.StatusCode)
 	}
 }
