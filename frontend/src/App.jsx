@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Check, Eye, EyeOff, Link2, Minus, Play, Settings2, ShieldCheck, Square, UserRound, X } from "lucide-react";
 
 const connections = { api: "外部 API", bridge: "云桥账号", official: "官方账号" };
@@ -14,6 +14,9 @@ export function App() {
   const [showAllModels, setShowAllModels] = useState(false);
   const [saved, setSaved] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [launched, setLaunched] = useState(false);
+  const [launching, setLaunching] = useState(false);
+  const launchLocked = useRef(false);
   const [status, setStatus] = useState("正在读取本机配置…");
   const [notice, setNotice] = useState("");
   const [showKey, setShowKey] = useState(false);
@@ -129,17 +132,23 @@ export function App() {
   }
 
   async function launch() {
+    if (launchLocked.current || busy) return;
     const app = backend();
     if (!app) return showError(new Error("客户端服务尚未启动"));
     setBusy(true);
     setNotice("");
+    launchLocked.current = true;
+    setLaunching(true);
     setStatus("正在启动 Codex…");
     try {
       const result = await app.Launch(connection, provider, model, apiUrl, apiKey);
+      setLaunched(true);
       setStatus(result || "Codex 已启动。");
     } catch (error) {
+      launchLocked.current = false;
       showError(error);
     } finally {
+      setLaunching(false);
       setBusy(false);
     }
   }
@@ -205,8 +214,8 @@ export function App() {
         <p className="model-hint"><span className="status-dot" />智能模型会根据任务自动路由；也可以手动选择已同步的模型</p>
       </section>}
 
-      <button type="button" className="launch-button" onClick={launch} disabled={busy || !ready}><Play size={22} fill="currentColor" strokeWidth={1.5} />{busy ? "正在处理…" : "启动 Codex"}</button>
-      <p className="launch-footnote">{ready ? "已准备就绪，将使用所选配置启动 Codex CLI。" : "请先完成连接配置"}</p>
+      <button type="button" className="launch-button" onClick={launch} disabled={busy || launched || !ready}><Play size={22} fill="currentColor" strokeWidth={1.5} />{launched ? "Codex 已启动" : launching ? "正在启动…" : busy ? "正在处理…" : "启动 Codex"}</button>
+      <p className="launch-footnote">{launched ? "Codex 已启动，请保持云桥客户端运行。" : ready ? "已准备就绪，将使用所选配置启动 Codex CLI。" : "请先完成连接配置"}</p>
     </main>
 
     <footer className="status-line" role="status" aria-live="polite"><span>{status}</span><span>云桥客户端 v{version}</span></footer>
