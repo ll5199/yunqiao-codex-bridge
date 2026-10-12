@@ -1423,7 +1423,9 @@ func launchCodex(install codexInstallation) error {
             diagnosticLog("launch.activation", fmt.Sprintf("pid=%d", pid))
             if waitForCodexDebug(5*time.Second) { return nil }
             diagnosticLog("launch.fallback", "activation did not open debug port; trying executable")
-            _ = kill.Run()
+            retryKill:=exec.Command("taskkill.exe","/F","/T","/IM",processName)
+            retryKill.SysProcAttr=&syscall.SysProcAttr{HideWindow:true}
+            _ = retryKill.Run()
             time.Sleep(800*time.Millisecond)
         } else { diagnosticLog("launch.activation_failed", err.Error()) }
 	}

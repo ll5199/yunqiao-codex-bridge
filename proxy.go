@@ -56,6 +56,7 @@ func startAPIProxy(rawTarget, apiKey string, logger func(string, string), availa
 	transport.(*compatibilityTransport).fallbackModel = smartRouter.fallbackModel
 	var statusMu sync.Mutex
  upstreamStatus:=""
+ activity.streamError=func(){statusMu.Lock();upstreamStatus="上游响应中断，请稍后重试或手动继续任务";statusMu.Unlock()}
  reverse := &httputil.ReverseProxy{
 		FlushInterval: 30 * time.Millisecond,
 		Transport:     transport,

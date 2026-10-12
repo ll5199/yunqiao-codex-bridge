@@ -35,6 +35,7 @@ type requestActivityTracker struct {
 	active  map[string]*requestActivity
 	counter atomic.Uint64
 	logger  func(string, string)
+ streamError func()
 }
 
 func newRequestActivityTracker(loggers ...func(string, string)) *requestActivityTracker {
@@ -223,6 +224,7 @@ func (body *activityReadCloser) Read(data []byte) (int, error) {
 		// event can carry a response larger than 2 KiB in a single read.
 		body.buffer = append(body.buffer, data[:count]...)
 		lower := bytes.ToLower(body.buffer)
+ if body.tracker.streamError!=nil && (bytes.Contains(lower,[]byte(`"type":"response.failed"`)) || bytes.Contains(lower,[]byte(`"type": "response.failed"`)) || bytes.Contains(lower,[]byte(`"type":"error"`)) || bytes.Contains(lower,[]byte(`"type": "error"`))) { body.tracker.streamError() }
 		if !body.complete && (bytes.Contains(lower, []byte(`"type":"response.completed"`)) || bytes.Contains(lower, []byte(`"type": "response.completed"`))) {
 			body.complete = true
 			body.log("proxy.stream_completed_event", "")
@@ -239,6 +241,7 @@ func (body *activityReadCloser) Read(data []byte) (int, error) {
 	if errors.Is(err, io.EOF) {
 		body.finalize("eof")
 	} else if err != nil {
+ if body.tracker.streamError!=nil { body.tracker.streamError() }
 		body.finalize("read_error")
 	}
 	return count, err

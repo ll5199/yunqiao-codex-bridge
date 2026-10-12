@@ -543,12 +543,12 @@ func (app *BridgeApp) ExportDiagnostics() (string,error) {
  if err!=nil || path=="" { return "",err }
  data,err:=os.ReadFile(diagnosticLogPath()); if err!=nil && !os.IsNotExist(err) { return "",err }
  if len(data)>2<<20 { data=data[len(data)-(2<<20):] }
- app.mu.Lock(); secret:=app.apiKey; app.mu.Unlock()
+ app.mu.Lock(); secrets:=[]string{app.apiKey};for _,key:=range app.entitlements.ProviderKeys { secrets=append(secrets,key) }; app.mu.Unlock()
  state:=app.GetState()
  header:=fmt.Sprintf("Yunqiao version=%s running=%t proxy=%t\n",appVersion,state.Running,state.ProxyRunning)
- text:=redactDiagnostics(header+string(data),secret)
+ text:=redactDiagnostics(header+string(data),secrets...)
  logs,_:=filepath.Glob(filepath.Join(applicationDirectory(),"updates","*.log"))
- for _,name:=range logs { b,e:=os.ReadFile(name); if e==nil { if len(b)>64<<10 { b=b[len(b)-(64<<10):] }; text+="\nUpdate log:\n"+redactDiagnostics(string(b),secret) } }
+ for _,name:=range logs { b,e:=os.ReadFile(name); if e==nil { if len(b)>64<<10 { b=b[len(b)-(64<<10):] }; text+="\nUpdate log:\n"+redactDiagnostics(string(b),secrets...) } }
  if err:=os.WriteFile(path,[]byte(text),0600); err!=nil { return "",err }
  return "诊断日志已导出（凭据已脱敏）。",nil
 }
