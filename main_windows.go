@@ -1404,7 +1404,9 @@ func activateApplication(aumid, arguments string) (uint32, error) {
 		clsctxLocalServer       = 0x4
 	)
 	hr, _, _ := procCoInitializeEx.Call(0, coinitApartmentThreaded)
-	if int32(hr) < 0 {
+	// A Wails worker may already belong to another COM apartment. In that
+	// case COM is initialized already; do not uninitialize the caller's apartment.
+	if int32(hr) < 0 && uint32(hr) != 0x80010106 { // RPC_E_CHANGED_MODE
 		return 0, fmt.Errorf("初始化应用激活器失败：0x%08X", uint32(hr))
 	}
 	initialized := int32(hr) >= 0
