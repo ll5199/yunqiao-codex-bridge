@@ -1207,7 +1207,7 @@ func saveApplicationConfig(baseURL, apiKey string, models []string, defaultModel
 		Models:              append([]string(nil), models...),
 		DefaultModel:        defaultModel,
 		PreserveChatGPTAuth: &preserveAuth,
-		AuthPreferenceSet:    true,
+		AuthPreferenceSet:   true,
 	}
 	body, err := json.MarshalIndent(config, "", "  ")
 	if err != nil {
@@ -1439,4 +1439,3 @@ func activateApplication(aumid, arguments string) (uint32, error) {
 	}
 	return pid, nil
 }
-

@@ -15,7 +15,7 @@ permissions:
 
 jobs:
   release:
-    runs-on: windows-latest
+    runs-on: windows-2022
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -82,6 +82,10 @@ jobs:
         shell: pwsh
         run: |
           $exe = (Resolve-Path build/bin/YunqiaoCodexBridge.exe).Path
+          $service = Get-Service WinDefend
+          if ($service.Status -ne 'Running') { Start-Service WinDefend }
+          $health = Get-MpComputerStatus
+          if (-not $health.AMServiceEnabled) { throw 'Defender service is not ready' }
           Update-MpSignature
           Start-MpScan -ScanType CustomScan -ScanPath $exe
           $detections = Get-MpThreatDetection | Where-Object { $_.Resources -match [regex]::Escape($exe) }

@@ -19,7 +19,7 @@ import (
 
 // Only the registered application identity is retained. An update may move the
 // package directory, and WindowsApps executables must not be launched directly.
-type codexInstallation struct { AUMID string }
+type codexInstallation struct{ AUMID string }
 
 var codexApplicationID = regexp.MustCompile(`^OpenAI\.Codex(?:Beta)?_[A-Za-z0-9]+![A-Za-z0-9._-]+$`)
 
@@ -46,12 +46,14 @@ func findCodexInstallation() (codexInstallation, error) {
 }
 
 func parseCodexPackageInstallation(output []byte) (codexInstallation, error) {
-	var pkg struct { AUMID, PackageFamilyName, AppID string }
+	var pkg struct{ AUMID, PackageFamilyName, AppID string }
 	if err := json.Unmarshal(bytes.TrimPrefix(bytes.TrimSpace(output), []byte{0xef, 0xbb, 0xbf}), &pkg); err != nil {
 		return codexInstallation{}, fmt.Errorf("Codex 应用入口信息解析失败：%w", err)
 	}
 	aumid := pkg.AUMID
-	if aumid == "" { aumid = pkg.PackageFamilyName + "!" + pkg.AppID }
+	if aumid == "" {
+		aumid = pkg.PackageFamilyName + "!" + pkg.AppID
+	}
 	if !codexApplicationID.MatchString(aumid) {
 		return codexInstallation{}, errors.New("Codex 应用包缺少有效的官方 AppUserModelID")
 	}
@@ -74,7 +76,9 @@ func launchCodexApplication(install codexInstallation, arguments string) error {
 	if !codexApplicationID.MatchString(install.AUMID) {
 		return errors.New("无法启动：官方 Codex 应用入口无效")
 	}
-	if err := stopTrackedCodexForRestart(); err != nil { return err }
+	if err := stopTrackedCodexForRestart(); err != nil {
+		return err
+	}
 	diagnosticLog("launch.application_entry", install.AUMID)
 	pid, err := activateAndConfirmCodex(install.AUMID, arguments, activateApplication, officialCodexProcessAlive, 10*time.Second)
 	if err != nil {
@@ -93,52 +97,72 @@ func launchCodexApplication(install codexInstallation, arguments string) error {
 
 func activateAndConfirmCodex(aumid, arguments string, activate func(string, string) (uint32, error), alive func(uint32, string) bool, timeout time.Duration) (uint32, error) {
 	pid, err := activate(aumid, arguments)
-	if err != nil { return 0, fmt.Errorf("通过 Windows 应用入口启动官方 Codex 失败：%w", err) }
-	if pid == 0 { return 0, errors.New("Windows 未返回官方 Codex 进程 ID") }
+	if err != nil {
+		return 0, fmt.Errorf("通过 Windows 应用入口启动官方 Codex 失败：%w", err)
+	}
+	if pid == 0 {
+		return 0, errors.New("Windows 未返回官方 Codex 进程 ID")
+	}
 	deadline := time.Now().Add(timeout)
 	for {
-		if alive(pid, aumid) { return pid, nil }
-		if !time.Now().Before(deadline) { break }
-		time.Sleep(100*time.Millisecond)
+		if alive(pid, aumid) {
+			return pid, nil
+		}
+		if !time.Now().Before(deadline) {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
 	}
 	return 0, errors.New("未检测到官方 Codex 进程，启动未确认，请重试或导出诊断日志")
 }
 
 var (
-	codexProcessMu sync.Mutex
-	codexProcessPID uint32
+	codexProcessMu     sync.Mutex
+	codexProcessPID    uint32
 	codexProcessHandle syscall.Handle
-	openCodexProcess = kernel32.NewProc("OpenProcess")
-	waitCodexProcess = kernel32.NewProc("WaitForSingleObject")
-	closeCodexProcess = kernel32.NewProc("CloseHandle")
-	queryCodexImage = kernel32.NewProc("QueryFullProcessImageNameW")
-	queryCodexPackage = kernel32.NewProc("GetPackageFamilyName")
+	openCodexProcess   = kernel32.NewProc("OpenProcess")
+	waitCodexProcess   = kernel32.NewProc("WaitForSingleObject")
+	closeCodexProcess  = kernel32.NewProc("CloseHandle")
+	queryCodexImage    = kernel32.NewProc("QueryFullProcessImageNameW")
+	queryCodexPackage  = kernel32.NewProc("GetPackageFamilyName")
 )
 
 func openProcessForTracking(pid uint32) syscall.Handle {
-	if pid == 0 { return 0 }
+	if pid == 0 {
+		return 0
+	}
 	// SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION
 	h, _, _ := openCodexProcess.Call(0x100000|0x1000, 0, uintptr(pid))
 	return syscall.Handle(h)
 }
 
 func processHandleAlive(handle syscall.Handle) bool {
-	if handle == 0 { return false }
+	if handle == 0 {
+		return false
+	}
 	result, _, _ := waitCodexProcess.Call(uintptr(handle), 0)
 	return result == 258 // WAIT_TIMEOUT: the process has not exited.
 }
 
 func officialCodexProcessAlive(pid uint32, aumid string) bool {
 	h := openProcessForTracking(pid)
-	if h == 0 { return false }
+	if h == 0 {
+		return false
+	}
 	defer closeCodexProcess.Call(uintptr(h))
-	if !processHandleAlive(h) { return false }
+	if !processHandleAlive(h) {
+		return false
+	}
 	var image [32768]uint16
 	length := uint32(len(image))
 	ok, _, _ := queryCodexImage.Call(uintptr(h), 0, uintptr(unsafe.Pointer(&image[0])), uintptr(unsafe.Pointer(&length)))
-	if ok == 0 { return false }
+	if ok == 0 {
+		return false
+	}
 	path := strings.ToLower(syscall.UTF16ToString(image[:length]))
-	if !strings.HasSuffix(path, `\chatgpt.exe`) && !strings.HasSuffix(path, `\codex.exe`) { return false }
+	if !strings.HasSuffix(path, `\chatgpt.exe`) && !strings.HasSuffix(path, `\codex.exe`) {
+		return false
+	}
 	var family [256]uint16
 	length = uint32(len(family))
 	result, _, _ := queryCodexPackage.Call(uintptr(h), uintptr(unsafe.Pointer(&length)), uintptr(unsafe.Pointer(&family[0])))
@@ -150,7 +174,9 @@ func officialCodexProcessAlive(pid uint32, aumid string) bool {
 func rememberCodexPID(pid uint32) {
 	codexProcessMu.Lock()
 	defer codexProcessMu.Unlock()
-	if codexProcessHandle != 0 { closeCodexProcess.Call(uintptr(codexProcessHandle)) }
+	if codexProcessHandle != 0 {
+		closeCodexProcess.Call(uintptr(codexProcessHandle))
+	}
 	codexProcessPID = pid
 	codexProcessHandle = openProcessForTracking(pid)
 }
@@ -158,14 +184,20 @@ func rememberCodexPID(pid uint32) {
 func codexIsRunning() bool {
 	codexProcessMu.Lock()
 	defer codexProcessMu.Unlock()
-	if processHandleAlive(codexProcessHandle) { return true }
-	if codexProcessHandle != 0 { closeCodexProcess.Call(uintptr(codexProcessHandle)) }
+	if processHandleAlive(codexProcessHandle) {
+		return true
+	}
+	if codexProcessHandle != 0 {
+		closeCodexProcess.Call(uintptr(codexProcessHandle))
+	}
 	codexProcessHandle, codexProcessPID = 0, 0
 	return false
 }
 
 func stopTrackedCodexForRestart() error {
-	if !codexIsRunning() { return nil }
+	if !codexIsRunning() {
+		return nil
+	}
 	codexProcessMu.Lock()
 	pid := codexProcessPID
 	codexProcessMu.Unlock()
@@ -173,12 +205,15 @@ func stopTrackedCodexForRestart() error {
 	defer cancel()
 	command := exec.CommandContext(ctx, "taskkill.exe", "/F", "/T", "/PID", fmt.Sprint(pid))
 	command.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
-	if err := command.Run(); err != nil && codexIsRunning() { return fmt.Errorf("重启前关闭官方 Codex 进程失败：%w", err) }
-	deadline := time.Now().Add(5*time.Second)
+	if err := command.Run(); err != nil && codexIsRunning() {
+		return fmt.Errorf("重启前关闭官方 Codex 进程失败：%w", err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
 	for codexIsRunning() {
-		if !time.Now().Before(deadline) { return errors.New("官方 Codex 尚未退出，请稍后重试") }
-		time.Sleep(100*time.Millisecond)
+		if !time.Now().Before(deadline) {
+			return errors.New("官方 Codex 尚未退出，请稍后重试")
+		}
+		time.Sleep(100 * time.Millisecond)
 	}
 	return nil
 }
-
