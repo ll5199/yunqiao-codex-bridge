@@ -1,0 +1,74 @@
+name: Verify Windows application activation
+on:
+  push:
+    branches: ['fix/aumid-launch']
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Frontend build and audit
+        working-directory: frontend
+        shell: pwsh
+        run: |
+          npm ci
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm audit --audit-level=moderate
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm run build
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Windows lifecycle regression tests
+        shell: pwsh
+        run: |
+          go mod tidy
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          gofmt -w launch_windows.go lifecycle_windows_test.go
+          go test -count=1 ./...
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          go vet -unsafeptr=false ./...
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Button lifecycle browser tests
+        shell: pwsh
+        run: |
+          npm install --prefix build/qa --no-audit --no-fund playwright@1.62.1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $env:NODE_PATH = "$pwd/build/qa/node_modules"
+          & ./build/qa/node_modules/.bin/playwright.cmd install chromium
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node scripts/test-launch-state.cjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Build executable with version resources
+        shell: pwsh
+        run: |
+          go install github.com/wailsapp/wails/v2/cmd/wails@v2.10.1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          go install github.com/josephspurrier/goversioninfo/cmd/goversioninfo@v1.5.0
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          goversioninfo -64 -o versioninfo_windows_amd64.syso
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          wails build -clean -nopackage -platform windows/amd64 -webview2 download -trimpath -ldflags "-s -w -H=windowsgui" -o YunqiaoCodexBridge.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Defender scan
+        shell: pwsh
+        run: |
+          $exe = (Resolve-Path build/bin/YunqiaoCodexBridge.exe).Path
+          Update-MpSignature
+          Start-MpScan -ScanType CustomScan -ScanPath $exe
+          if (Get-MpThreatDetection | Where-Object { $_.Resources -match [regex]::Escape($exe) }) { throw 'Defender detection: artifact withheld' }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: yunqiao-aumid-launch-verified
+          path: |
+            build/bin/YunqiaoCodexBridge.exe
+            build/launch-state-qa/
+            launch_windows.go
+            lifecycle_windows_test.go
+

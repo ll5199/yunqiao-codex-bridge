@@ -17,7 +17,7 @@ import (
 const (
 	defaultBaseURL = "https://api.velyn65.com/v1"
 	providerID     = "yunqiao_bridge"
-	appVersion     = "1.6.4"
+	appVersion     = "1.6.5"
 )
 
 type appConfig struct {
@@ -346,3 +346,4 @@ func removeYunqiaoCodexConfig(existing string) string {
 	}
 	return body + "\n"
 }
+

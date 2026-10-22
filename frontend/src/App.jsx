@@ -29,7 +29,7 @@ export function App() {
   const [cloud, setCloud] = useState(emptyCloud);
   const [provider, setProvider] = useState("");
   const [runtimeState, setRuntimeState] = useState({ running: false, proxyRunning: false });
-  const [version, setVersion] = useState("1.6.4");
+  const [version, setVersion] = useState("1.6.5");
 
   function showError(error) {
     const message = error?.message || String(error || "操作失败");
@@ -51,7 +51,7 @@ export function App() {
       setSaved(Boolean(state.hasAPIKey));
       setApiModels(found);
       setModel(found.includes(autoModel) ? autoModel : state.selectedModel || autoModel);
-      setVersion(state.version || "1.6.4");
+      setVersion(state.version || "1.6.5");
       setStatus(state.status || "准备就绪");
       setCloud(state.cloud || emptyCloud);
       setRuntimeState(state);
@@ -172,10 +172,17 @@ export function App() {
     setStatus("正在启动 Codex…");
     try {
       const result = await app.Launch(connection, provider, model, apiUrl, apiKey);
-      setLaunched(true);
+      const state = await app.GetState();
+      setRuntimeState(state);
+      setLaunched(Boolean(state.running));
+      launchLocked.current = Boolean(state.running);
+      if (!state.running) throw new Error("未检测到官方 Codex 进程，请重试或导出诊断日志。");
       setStatus(result || "Codex 已启动。");
     } catch (error) {
+      // A failed launch must unlock immediately; polling can subsequently detect
+      // a process that survived a later localization/injection error.
       launchLocked.current = false;
+      setLaunched(false);
       showError(error);
     } finally {
       setLaunching(false);
@@ -261,3 +268,4 @@ export function App() {
     {notice && <div className="toast" role="alert">{notice}<button type="button" aria-label="关闭提示" onClick={() => setNotice("")}><X size={15} /></button></div>}
   </div>;
 }
+

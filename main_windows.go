@@ -3,12 +3,10 @@
 package main
 
 import (
-	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
- "net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -1340,139 +1338,6 @@ func restoreNativeCodexConfig() error {
 	return nil
 }
 
-type codexInstallation struct {
-	Executable string
-	AUMID      string
-}
-
-func findCodexInstallation() (codexInstallation, error) {
-	local := os.Getenv("LOCALAPPDATA")
-	for _, path := range []string{
-		filepath.Join(local, "OpenAI", "Codex", "bin", "Codex.exe"),
-		filepath.Join(local, "OpenAI", "Codex", "bin", "ChatGPT.exe"),
-		filepath.Join(local, "Programs", "OpenAI", "Codex", "Codex.exe"),
-		filepath.Join(local, "Programs", "OpenAI", "Codex", "ChatGPT.exe"),
-	} {
-		if info, err := os.Stat(path); err == nil && !info.IsDir() {
-			return codexInstallation{Executable: path}, nil
-		}
-	}
-
-	script := `$p = Get-AppxPackage | Where-Object { $_.Name -in @('OpenAI.Codex','OpenAI.CodexBeta') } | Sort-Object Version -Descending | Select-Object -First 1; if ($p) { $m = Get-AppxPackageManifest $p; ` + codexAppManifestSelectionScript + ` }`
-	command := exec.Command("powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script)
-	command.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
-	output, err := command.Output()
-	if err == nil && len(strings.TrimSpace(string(output))) > 0 {
-		install, parseErr := parseCodexPackageInstallation(output)
-		if parseErr != nil { diagnosticLog("launch.package_invalid", parseErr.Error()); return codexInstallation{}, parseErr }
-		return install, nil
-	}
-	if err != nil { diagnosticLog("launch.package_query_failed", err.Error()) }
-	return codexInstallation{}, errors.New("未找到官方 Codex Windows 客户端，请先安装并至少直接启动一次")
-}
-
-func launchCodex(install codexInstallation) error {
-	workingDirectory, err := os.UserHomeDir()
-	if err != nil {
-		return fmt.Errorf("无法确定 Windows 用户目录：%w", err)
-	}
-	if strings.TrimSpace(workingDirectory) == "" {
-		return errors.New("Windows 用户目录为空")
-	}
-	info, err := os.Stat(workingDirectory)
-	if err != nil || !info.IsDir() {
-		return fmt.Errorf("Windows 用户目录不可用：%s", workingDirectory)
-	}
-
-	processName := filepath.Base(install.Executable)
-	if processName == "" {
-		processName = "Codex.exe"
-	}
-	kill := exec.Command("taskkill.exe", "/F", "/T", "/IM", processName)
-	kill.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
-	_ = kill.Run()
-	time.Sleep(800 * time.Millisecond)
-
-	previousDirectory, getDirectoryErr := os.Getwd()
-	if err := os.Chdir(workingDirectory); err != nil {
-		return fmt.Errorf("切换 Codex 默认工作目录失败：%w", err)
-	}
-	if getDirectoryErr == nil && previousDirectory != "" {
-		defer func() { _ = os.Chdir(previousDirectory) }()
-	}
-	diagnosticLog("launch.working_directory", workingDirectory)
-
-	arguments := fmt.Sprintf("--remote-debugging-port=%d --remote-allow-origins=http://127.0.0.1:%d --inspect=127.0.0.1:%d --lang=zh-CN", cdpPort, cdpPort, inspectorPort)
-	if install.AUMID != "" && strings.TrimSpace(os.Getenv("CODEX_HOME")) == "" {
-		if pid, err := activateApplication(install.AUMID, arguments); err == nil {
-            rememberCodexPID(pid)
-            diagnosticLog("launch.activation", fmt.Sprintf("pid=%d", pid))
-            if waitForCodexDebug(5*time.Second) { return nil }
-            diagnosticLog("launch.fallback", "activation did not open debug port; trying executable")
-            retryKill:=exec.Command("taskkill.exe","/F","/T","/IM",processName)
-            retryKill.SysProcAttr=&syscall.SysProcAttr{HideWindow:true}
-            _ = retryKill.Run()
-            time.Sleep(800*time.Millisecond)
-        } else { diagnosticLog("launch.activation_failed", err.Error()) }
-	}
-	if install.Executable == "" {
-		return errors.New("已找到 Codex 应用包，但无法激活其调试模式")
-	}
-	command := exec.Command(install.Executable,
-		fmt.Sprintf("--remote-debugging-port=%d", cdpPort),
-		fmt.Sprintf("--remote-allow-origins=http://127.0.0.1:%d", cdpPort),
-		fmt.Sprintf("--inspect=127.0.0.1:%d", inspectorPort),
-		"--lang=zh-CN",
-	)
-	command.Dir = workingDirectory
-	command.Env = append(os.Environ(), "LANG=zh_CN.UTF-8")
-	if err := command.Start(); err != nil {
-		return fmt.Errorf("启动官方 Codex 失败：%w", err)
-	}
- rememberCodexPID(uint32(command.Process.Pid))
- diagnosticLog("launch.executable", fmt.Sprintf("pid=%d", command.Process.Pid))
- _ = waitForCodexDebug(5*time.Second)
-	return nil
-}
-
-func launchCodexNative(install codexInstallation) error {
-	workingDirectory, err := os.UserHomeDir()
-	if err != nil {
-		return fmt.Errorf("无法确定 Windows 用户目录：%w", err)
-	}
-	if strings.TrimSpace(workingDirectory) == "" {
-		return errors.New("Windows 用户目录为空")
-	}
-	info, err := os.Stat(workingDirectory)
-	if err != nil || !info.IsDir() {
-		return fmt.Errorf("Windows 用户目录不可用：%s", workingDirectory)
-	}
-
-	processName := filepath.Base(install.Executable)
-	if processName == "" {
-		processName = "Codex.exe"
-	}
-	kill := exec.Command("taskkill.exe", "/F", "/T", "/IM", processName)
-	kill.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
-	_ = kill.Run()
-	time.Sleep(800 * time.Millisecond)
-
-	if install.AUMID != "" && strings.TrimSpace(os.Getenv("CODEX_HOME")) == "" {
-		if _, err := activateApplication(install.AUMID, ""); err == nil {
-			return nil
-		}
-	}
-	if install.Executable == "" {
-		return errors.New("已找到 Codex 应用包，但无法启动")
-	}
-	command := exec.Command(install.Executable)
-	command.Dir = workingDirectory
-	if err := command.Start(); err != nil {
-		return fmt.Errorf("启动官方 Codex 失败：%w", err)
-	}
-	return nil
-}
-
 func replaceAPIProxy(baseURL, apiKey string, availableModels ...[]string) (*apiProxy, error) {
 	proxyMutex.Lock()
 	defer proxyMutex.Unlock()
@@ -1532,11 +1397,16 @@ func diagnosticLog(event, detail string) {
 }
 
 func activateApplication(aumid, arguments string) (uint32, error) {
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
 	const (
 		coinitApartmentThreaded = 0x2
 		clsctxLocalServer       = 0x4
 	)
 	hr, _, _ := procCoInitializeEx.Call(0, coinitApartmentThreaded)
+	if int32(hr) < 0 {
+		return 0, fmt.Errorf("初始化应用激活器失败：0x%08X", uint32(hr))
+	}
 	initialized := int32(hr) >= 0
 	if initialized {
 		defer procCoUninitialize.Call()
@@ -1569,36 +1439,3 @@ func activateApplication(aumid, arguments string) (uint32, error) {
 	return pid, nil
 }
 
-var codexProcessMu sync.Mutex
-var codexProcessPID uint32
-func rememberCodexPID(pid uint32) { codexProcessMu.Lock(); codexProcessPID=pid; codexProcessMu.Unlock() }
-func codexIsRunning() bool {
- codexProcessMu.Lock(); pid:=codexProcessPID; codexProcessMu.Unlock()
- if pid==0 { return false }
- k:=syscall.NewLazyDLL("kernel32.dll")
- h,_,_:=k.NewProc("OpenProcess").Call(0x1000,0,uintptr(pid))
- if h==0 { return false }; defer k.NewProc("CloseHandle").Call(h)
- var code uint32
- ok,_,_:=k.NewProc("GetExitCodeProcess").Call(h,uintptr(unsafe.Pointer(&code)))
- return ok!=0 && code==259
-}
-func waitForCodexDebug(timeout time.Duration) bool {
- client:= &http.Client{Timeout:500*time.Millisecond}
- deadline:=time.Now().Add(timeout)
- for time.Now().Before(deadline) { if targets,err:=listCDPTargets(client,cdpPort); err==nil { for _,t:=range targets { if t.WebSocketDebuggerURL!="" && (t.Type=="page" || t.Type=="webview") { return true } } }; time.Sleep(200*time.Millisecond) }
- return false
-}
-
-// Select one UI application before serializing; never cast all Executable nodes to a string.
-const codexAppManifestSelectionScript = `$ui = @($m.Package.Applications.Application) | Where-Object { ([string]$_.Executable) -match '(?i)(^|[\\/])(Codex|ChatGPT)\.exe$' } | Select-Object -First 1; if ($ui) { [PSCustomObject]@{ InstallLocation=[string]$p.InstallLocation; PackageFamilyName=[string]$p.PackageFamilyName; Executable=[string]$ui.Executable; AppID=[string]$ui.Id } | ConvertTo-Json -Compress }`
-
-func parseCodexPackageInstallation(output []byte) (codexInstallation, error) {
- var pkg struct { InstallLocation string; PackageFamilyName string; Executable string; AppID string }
- if err := json.Unmarshal(bytes.TrimPrefix(bytes.TrimSpace(output), []byte{0xef,0xbb,0xbf}), &pkg); err != nil { return codexInstallation{}, fmt.Errorf("Codex 应用包信息解析失败：%w",err) }
- name:=strings.ToLower(filepath.Base(pkg.Executable))
- if (name!="chatgpt.exe" && name!="codex.exe") || pkg.InstallLocation=="" || pkg.PackageFamilyName=="" || pkg.AppID=="" || filepath.IsAbs(pkg.Executable) { return codexInstallation{}, errors.New("Codex 应用包缺少有效主程序或应用 ID") }
- executable:=filepath.Join(pkg.InstallLocation,pkg.Executable)
- info,err:=os.Stat(executable)
- if err!=nil || info.IsDir() { return codexInstallation{}, fmt.Errorf("Codex 主程序不存在：%s",executable) }
- return codexInstallation{Executable:executable,AUMID:pkg.PackageFamilyName+"!"+pkg.AppID},nil
-}
