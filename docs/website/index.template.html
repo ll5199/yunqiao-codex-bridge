@@ -1,0 +1,399 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="description" content="云桥 Codex Bridge Windows 客户端官方下载页面">
+  <title>下载云桥客户端｜连接更多模型，继续使用熟悉的 Codex</title>
+  <style>
+    :root {
+      --canvas: #f7f7f4;
+      --surface: #ffffff;
+      --surface-soft: #f0f2ed;
+      --ink: #1f211d;
+      --muted: #676b62;
+      --line: #dfe2da;
+      --green: #35604f;
+      --green-dark: #294a3e;
+      --green-soft: #e9f0eb;
+      --shadow: 0 22px 60px rgba(31, 42, 36, .11);
+      --radius: 22px;
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 9% 8%, rgba(53, 96, 79, .08), transparent 26rem),
+        radial-gradient(circle at 92% 28%, rgba(157, 178, 153, .13), transparent 28rem),
+        var(--canvas);
+      font-family: Inter, "SF Pro Display", "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    a { color: inherit; text-decoration: none; }
+    button, a { -webkit-tap-highlight-color: transparent; }
+    .wrap { width: min(1160px, calc(100% - 40px)); margin: 0 auto; }
+
+    .nav {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      background: rgba(247, 247, 244, .82);
+      border-bottom: 1px solid rgba(223, 226, 218, .72);
+      backdrop-filter: blur(18px);
+    }
+    .nav-inner {
+      height: 72px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+    }
+    .brand { display: flex; align-items: center; gap: 12px; font-weight: 700; letter-spacing: -.02em; }
+    .brand-mark {
+      width: 38px;
+      height: 38px;
+      position: relative;
+      display: grid;
+      place-items: center;
+      color: white;
+      border-radius: 12px;
+      background: var(--green);
+      box-shadow: 0 8px 18px rgba(53, 96, 79, .22);
+    }
+    .brand-mark::before,
+    .brand-mark::after {
+      content: "";
+      position: absolute;
+      width: 16px;
+      height: 8px;
+      border: 2px solid currentColor;
+      border-radius: 999px;
+      transform: rotate(-24deg);
+    }
+    .brand-mark::before { left: 6px; top: 11px; }
+    .brand-mark::after { right: 6px; bottom: 11px; }
+    .nav-links { display: flex; align-items: center; gap: 26px; color: var(--muted); font-size: 14px; }
+    .nav-links a:hover { color: var(--ink); }
+    .nav-download {
+      padding: 10px 17px;
+      color: #fff !important;
+      background: var(--green);
+      border-radius: 11px;
+      font-weight: 650;
+    }
+
+    .hero {
+      min-height: 690px;
+      padding: 84px 0 66px;
+      display: grid;
+      grid-template-columns: 1.02fr .98fr;
+      align-items: center;
+      gap: 58px;
+    }
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 9px;
+      padding: 7px 12px;
+      color: var(--green-dark);
+      background: var(--green-soft);
+      border: 1px solid #d6e2d9;
+      border-radius: 999px;
+      font-size: 13px;
+      font-weight: 650;
+    }
+    .eyebrow i { width: 7px; height: 7px; border-radius: 50%; background: #4c8b70; box-shadow: 0 0 0 4px rgba(76, 139, 112, .12); }
+    h1 {
+      margin: 24px 0 20px;
+      max-width: 680px;
+      font-size: clamp(44px, 5.6vw, 72px);
+      line-height: 1.06;
+      letter-spacing: -.055em;
+      font-weight: 720;
+    }
+    h1 span { color: var(--green); }
+    .hero-copy {
+      max-width: 600px;
+      margin: 0;
+      color: var(--muted);
+      font-size: 18px;
+      line-height: 1.78;
+    }
+    .actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 32px; }
+    .button {
+      min-height: 52px;
+      padding: 0 21px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      border: 1px solid var(--line);
+      border-radius: 13px;
+      background: rgba(255,255,255,.78);
+      font-weight: 680;
+      transition: transform .18s ease, box-shadow .18s ease, background .18s ease;
+    }
+    .button:hover { transform: translateY(-2px); box-shadow: 0 10px 24px rgba(31, 42, 36, .09); }
+    .button.primary { color: #fff; border-color: var(--green); background: var(--green); }
+    .button.primary:hover { background: var(--green-dark); }
+    .button svg { width: 19px; height: 19px; }
+    .meta { margin-top: 19px; display: flex; flex-wrap: wrap; gap: 10px 19px; color: #777b72; font-size: 13px; }
+    .meta span { display: inline-flex; align-items: center; gap: 7px; }
+    .meta span::before { content: ""; width: 5px; height: 5px; border-radius: 50%; background: #9ea39a; }
+
+    .app-stage { position: relative; padding: 34px 0 28px; }
+    .app-stage::before {
+      content: "";
+      position: absolute;
+      inset: 0 7% 4%;
+      border-radius: 50%;
+      background: rgba(53, 96, 79, .14);
+      filter: blur(44px);
+    }
+    .app-window {
+      position: relative;
+      overflow: hidden;
+      border: 1px solid #d5d9d1;
+      border-radius: 18px;
+      background: #fafaf8;
+      box-shadow: var(--shadow);
+      transform: perspective(1200px) rotateY(-2deg) rotateX(1deg);
+    }
+    .titlebar { height: 43px; padding: 0 15px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #e2e4df; background: #fff; font-size: 12px; }
+    .titlebar-left { display: flex; align-items: center; gap: 9px; font-weight: 650; }
+    .mini-mark { width: 18px; height: 18px; border-radius: 5px; background: var(--green); }
+    .window-actions { color: #8a8e86; letter-spacing: 8px; }
+    .app-body { padding: 21px 22px 23px; }
+    .app-heading { font-size: 18px; font-weight: 700; }
+    .app-sub { margin-top: 5px; color: #767b72; font: 11px/1.4 ui-monospace, SFMono-Regular, Consolas, monospace; }
+    .mode-tabs { display: flex; gap: 8px; margin: 18px 0 14px; }
+    .mode-tabs span { padding: 7px 11px; border-radius: 8px; color: #666b63; background: #f1f2ef; font-size: 11px; }
+    .mode-tabs .active { color: #fff; background: var(--green); }
+    .panel { padding: 15px; border: 1px solid #dfe2da; border-radius: 12px; background: #fff; }
+    .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .field label { display: block; margin: 0 0 6px; color: #777b73; font-size: 10px; }
+    .fake-input { height: 34px; padding: 0 10px; display: flex; align-items: center; color: #555a53; border: 1px solid #d9dcd5; border-radius: 7px; background: #fbfbfa; font-size: 11px; }
+    .fake-input strong { width: 7px; height: 7px; margin-right: 7px; border-radius: 50%; background: #63a080; }
+    .ad-line { margin: 13px 0; padding: 10px 12px; display: flex; justify-content: space-between; color: #456052; border-radius: 8px; background: #eef3ee; font-size: 10px; }
+    .app-buttons { display: grid; grid-template-columns: 1.2fr 1fr; gap: 8px; }
+    .app-buttons span { min-height: 35px; display: grid; place-items: center; border: 1px solid #d9dcd5; border-radius: 8px; background: #fff; font-size: 10px; font-weight: 650; }
+    .app-buttons .bridge { color: #fff; border-color: var(--green); background: var(--green); }
+    .app-buttons .native { color: var(--green-dark); background: var(--green-soft); }
+    .status { margin-top: 12px; padding: 10px 12px; border-radius: 8px; color: #42614f; background: #eef3ea; font-size: 10px; }
+    .float-card {
+      position: absolute;
+      right: -22px;
+      bottom: 2px;
+      padding: 12px 15px;
+      border: 1px solid rgba(214, 220, 211, .9);
+      border-radius: 13px;
+      background: rgba(255,255,255,.92);
+      box-shadow: 0 14px 32px rgba(31, 42, 36, .12);
+      backdrop-filter: blur(10px);
+      font-size: 12px;
+    }
+    .float-card b { display: block; margin-bottom: 3px; color: var(--green); }
+
+    .trust-strip { border-block: 1px solid var(--line); background: rgba(255,255,255,.48); }
+    .trust-grid { min-height: 92px; display: grid; grid-template-columns: repeat(4, 1fr); align-items: center; }
+    .trust-item { padding: 0 24px; text-align: center; border-right: 1px solid var(--line); }
+    .trust-item:first-child { padding-left: 0; }
+    .trust-item:last-child { padding-right: 0; border: 0; }
+    .trust-item strong { display: block; margin-bottom: 4px; font-size: 15px; }
+    .trust-item span { color: var(--muted); font-size: 12px; }
+
+    section { padding: 104px 0; }
+    .section-head { max-width: 680px; margin-bottom: 44px; }
+    .section-head small { color: var(--green); font-weight: 720; letter-spacing: .08em; }
+    h2 { margin: 11px 0 13px; font-size: clamp(32px, 4vw, 48px); line-height: 1.13; letter-spacing: -.04em; }
+    .section-head p { margin: 0; color: var(--muted); font-size: 16px; line-height: 1.7; }
+    .feature-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+    .feature {
+      min-height: 218px;
+      padding: 25px;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: rgba(255,255,255,.7);
+    }
+    .feature-icon { width: 42px; height: 42px; display: grid; place-items: center; color: var(--green); border-radius: 12px; background: var(--green-soft); font-size: 20px; }
+    .feature h3 { margin: 25px 0 10px; font-size: 18px; }
+    .feature p { margin: 0; color: var(--muted); font-size: 14px; line-height: 1.72; }
+
+    .install-card { padding: 46px; border: 1px solid #d7ddd5; border-radius: var(--radius); background: var(--green); color: #fff; box-shadow: 0 28px 70px rgba(53, 96, 79, .2); }
+    .install-top { display: flex; align-items: end; justify-content: space-between; gap: 26px; margin-bottom: 38px; }
+    .install-top h2 { margin: 0; max-width: 590px; }
+    .install-top p { margin: 0; color: rgba(255,255,255,.72); line-height: 1.65; }
+    .steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
+    .step { padding-top: 20px; border-top: 1px solid rgba(255,255,255,.22); }
+    .step b { width: 28px; height: 28px; display: grid; place-items: center; margin-bottom: 16px; color: var(--green); border-radius: 50%; background: #fff; font-size: 12px; }
+    .step strong { display: block; margin-bottom: 8px; }
+    .step span { color: rgba(255,255,255,.7); font-size: 13px; line-height: 1.65; }
+
+    .faq-list { max-width: 860px; }
+    details { padding: 21px 0; border-bottom: 1px solid var(--line); }
+    summary { cursor: pointer; list-style: none; display: flex; justify-content: space-between; gap: 20px; font-weight: 650; }
+    summary::-webkit-details-marker { display: none; }
+    summary::after { content: "+"; color: var(--green); font-size: 21px; font-weight: 400; }
+    details[open] summary::after { content: "−"; }
+    details p { margin: 14px 32px 0 0; color: var(--muted); font-size: 14px; line-height: 1.75; }
+
+    .bottom-cta { padding-top: 0; }
+    .cta-box { padding: 52px; text-align: center; border: 1px solid var(--line); border-radius: var(--radius); background: #fff; box-shadow: 0 20px 55px rgba(31,42,36,.07); }
+    .cta-box h2 { margin-top: 0; }
+    .cta-box p { margin: -2px auto 25px; max-width: 610px; color: var(--muted); line-height: 1.7; }
+
+    footer { padding: 32px 0 42px; color: #777b72; font-size: 12px; }
+    .footer-row { display: flex; justify-content: space-between; align-items: center; gap: 20px; }
+
+    @media (max-width: 900px) {
+      .nav-links a:not(.nav-download) { display: none; }
+      .hero { grid-template-columns: 1fr; padding-top: 64px; gap: 20px; }
+      .hero-copy { max-width: 700px; }
+      .app-stage { width: min(650px, 100%); margin: 0 auto; }
+      .trust-grid { grid-template-columns: repeat(2, 1fr); padding: 14px 0; }
+      .trust-item { min-height: 56px; display: grid; place-content: center; }
+      .trust-item:nth-child(2) { border-right: 0; }
+      .feature-grid { grid-template-columns: repeat(2, 1fr); }
+      .install-top { align-items: start; flex-direction: column; }
+    }
+
+    @media (max-width: 600px) {
+      .wrap { width: min(100% - 28px, 1160px); }
+      .nav-inner { height: 64px; }
+      .brand-mark { width: 34px; height: 34px; }
+      .hero { min-height: auto; padding: 50px 0 44px; }
+      h1 { margin-top: 20px; font-size: 43px; }
+      .hero-copy { font-size: 16px; }
+      .actions { display: grid; }
+      .button { width: 100%; }
+      .float-card { right: 4px; bottom: -8px; }
+      .app-body { padding: 16px; }
+      .field-row { grid-template-columns: 1fr; }
+      .app-buttons { grid-template-columns: 1fr; }
+      .trust-grid { grid-template-columns: 1fr 1fr; }
+      .trust-item { padding: 0 8px; }
+      section { padding: 76px 0; }
+      .feature-grid, .steps { grid-template-columns: 1fr; }
+      .feature { min-height: 0; }
+      .install-card, .cta-box { padding: 31px 24px; }
+      .footer-row { align-items: flex-start; flex-direction: column; }
+    }
+  </style>
+</head>
+<body>
+  <nav class="nav">
+    <div class="wrap nav-inner">
+      <a class="brand" href="#top" aria-label="云桥首页">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <span>云桥（熙楠）</span>
+      </a>
+      <div class="nav-links">
+        <a href="#features">功能</a>
+        <a href="#install">安装说明</a>
+        <a href="/tutorial.html">使用教程</a>
+        <a href="#faq">常见问题</a>
+        <a class="nav-download" href="https://index.velyn65.com/download/YunqiaoCodexBridge-v1.6.4.exe">下载客户端</a>
+      </div>
+    </div>
+  </nav>
+
+  <main id="top">
+    <div class="wrap hero">
+      <div>
+        <span class="eyebrow"><i></i> Windows 客户端</span>
+        <h1>连接更多模型，<br><span>继续使用熟悉的 Codex。</span></h1>
+        <p class="hero-copy">云桥 Codex Bridge 将云桥账号或外部 API 安全接入官方 Codex 客户端。保存 Key 自动同步模型，默认选择智能模型，也可以切换为官方账号启动。</p>
+        <div class="actions">
+          <a class="button primary" href="https://index.velyn65.com/download/YunqiaoCodexBridge-v1.6.4.exe">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12m0 0 5-5m-5 5-5-5M5 21h14"/></svg>
+            下载 Windows 版
+          </a>
+          <a class="button" href="https://github.com/ll5199/yunqiao-codex-bridge/releases/tag/v1.6.4" target="_blank" rel="noreferrer">GitHub 备用下载</a>
+        </div>
+        <div class="meta">
+          <span>Windows 10 / 11</span>
+          <span>v1.6.4 · x64 · 约 11.6 MB</span>
+          <span>无需安装，双击运行</span>
+        </div>
+      </div>
+
+      <div class="app-stage" aria-label="新版云桥客户端操作示意"><div class="app-window"><img src="@@IMG:api-saved@@" width="1000" height="680" style="display:block;width:100%;height:auto" alt="新版云桥：外部 API、云桥账号、官方账号三种连接方式，保存并同步模型，默认智能模型，单一启动按钮"></div><p style="position:relative;color:#676b62;font-size:12px;line-height:1.7">v1.6.4 操作示意 · 模型以实际同步为准 · <a href="/tutorial.html" style="text-decoration:underline">查看新版教程 →</a></p></div>
+    </div>
+
+    <div class="trust-strip">
+      <div class="wrap trust-grid">
+        <div class="trust-item"><strong>官方 Codex 客户端</strong><span>不修改安装文件</span></div>
+        <div class="trust-item"><strong>本机安全代理</strong><span>仅监听 127.0.0.1</span></div>
+        <div class="trust-item"><strong>DPAPI 加密</strong><span>Key 仅保存在本机</span></div>
+        <div class="trust-item"><strong>下载即用</strong><span>绿色便携，无需安装</span></div>
+      </div>
+    </div>
+
+    <section id="features">
+      <div class="wrap">
+        <div class="section-head">
+          <small>核心功能</small>
+          <h2>一个轻量入口，连接你的模型与 Codex。</h2>
+          <p>保留官方客户端熟悉的工作方式，只把账号、模型选择和中转连接集中到云桥。</p>
+        </div>
+        <div class="feature-grid">
+          <article class="feature"><div class="feature-icon">⌁</div><h3>云桥账号登录</h3><p>登录后自动读取有效订阅、上游分组和对应模型，无需手动复制多组 Key。</p></article>
+          <article class="feature"><div class="feature-icon">◇</div><h3>外部 API 接入</h3><p>填写兼容 API 地址与 Key，点击“保存并同步模型”，即可直接选择智能模型或指定模型。</p></article>
+          <article class="feature"><div class="feature-icon">↗</div><h3>官方账号启动</h3><p>顶部选择“官方账号”，再点击“启动 Codex”，即可使用自己的 ChatGPT 账号。</p></article>
+          <article class="feature"><div class="feature-icon">◫</div><h3>多模型切换</h3><p>默认智能路由，也可以直接点击指定模型；可用模型以接口和套餐权限为准。</p></article>
+          <article class="feature"><div class="feature-icon">◎</div><h3>图片结果桥接</h3><p>捕获兼容接口返回的图片并展示在当前对话中，支持原图下载与历史恢复。</p></article>
+        </div>
+      </div>
+    </section>
+
+    <section id="install">
+      <div class="wrap">
+        <div class="install-card">
+          <div class="install-top">
+            <h2>下载后，三步开始使用。</h2>
+            <p>绿色便携版，无需安装程序。<br>建议放到固定文件夹后运行。</p>
+          </div>
+          <div class="steps">
+            <div class="step"><b>1</b><strong>下载并运行</strong><span>下载 YunqiaoCodexBridge.exe，双击打开客户端。</span></div>
+            <div class="step"><b>2</b><strong>选择连接方式</strong><span>选择外部 API 并保存同步，或登录云桥账号；也支持官方账号。</span></div>
+            <div class="step"><b>3</b><strong>启动 Codex</strong><span>默认选择智能模型，点击“启动 Codex”；使用中转时保持云桥运行。</span></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="faq">
+      <div class="wrap">
+        <div class="section-head"><small>常见问题</small><h2>下载与使用说明</h2></div>
+        <div class="faq-list">
+          <details><summary>云桥会修改官方 Codex 客户端吗？</summary><p>不会。云桥只使用 Codex 支持的自定义模型供应商配置，并通过本机代理连接 API，不修改官方安装文件。</p></details>
+          <details><summary>为什么 Windows 可能提示“未知发布者”？</summary><p>当前便携版尚未配置商业代码签名证书，请只从本页面或 GitHub 下载。</p></details>
+          <details><summary>如何改回 ChatGPT 官方账号登录？</summary><p>先结束当前工作并退出 Codex，再打开云桥，选择顶部“官方账号”，点击同一个“启动 Codex”按钮；随后在 Codex 中登录。</p></details>
+        </div>
+      </div>
+    </section>
+
+    <section class="bottom-cta">
+      <div class="wrap">
+        <div class="cta-box">
+          <h2>准备好连接你的 Codex 了吗？</h2>
+          <p>下载 Windows 客户端，使用云桥账号、外部 API 或 ChatGPT 官方账号开始工作。</p>
+          <a class="button primary" href="https://index.velyn65.com/download/YunqiaoCodexBridge-v1.6.4.exe">立即下载 Windows 版</a>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="wrap footer-row">
+      <div class="brand"><span class="brand-mark" aria-hidden="true"></span><span>云桥（熙楠）</span></div>
+      <span>© 2026 云桥 · Windows Codex Bridge</span>
+    </div>
+  </footer>
+
+</body>
+</html>

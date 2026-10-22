@@ -1,0 +1,34 @@
+name: Build launcher tutorial
+on:
+  push:
+    branches: ['docs/tutorial-v1.6.4']
+    paths: ['docs/website/*.template.html', 'scripts/render-tutorial.cjs', '.github/workflows/tutorial-build.yml']
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Build actual launcher frontend
+        working-directory: frontend
+        run: npm ci && npm run build
+      - name: Install renderer and CJK fonts
+        run: |
+          npm install --no-save --prefix /tmp/yunqiao-browser playwright@1.62.1
+          /tmp/yunqiao-browser/node_modules/.bin/playwright install --with-deps chromium
+          sudo apt-get install -y fonts-noto-cjk
+      - name: Render screenshots and validate desktop and mobile tutorial
+        env:
+          NODE_PATH: /tmp/yunqiao-browser/node_modules
+        run: node scripts/render-tutorial.cjs
+      - name: Save verified website artifacts
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add docs/website
+          git commit -m 'Render v1.6.4 tutorial and website screenshots' || test -z "$(git status --porcelain)"
+          git push
