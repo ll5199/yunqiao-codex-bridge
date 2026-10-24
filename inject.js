@@ -663,6 +663,14 @@
     const prose = visibleConversationNodes(".prose");
     if (prose.length) return { mode: "append", target: prose.at(-1) };
 
+    // Newer Codex builds have no role/testid markers; anchor on the action
+    // row (copy / more buttons) under the latest assistant reply instead.
+    const copyButtons = visibleConversationNodes(
+      "button[aria-label*='Copy' i], button[aria-label*='复制'], button[title*='Copy' i], button[title*='复制']"
+    ).filter((button) => !button.closest("form, .composer-footer, [data-testid*='composer']"));
+    const actionRow = copyButtons.at(-1)?.parentElement;
+    if (actionRow?.parentElement) return { mode: "before", target: actionRow };
+
     const conversationRoot = document.querySelector("main") ||
       document.querySelector("[data-testid*='conversation'], [data-testid*='thread']") ||
       document.body;
@@ -801,6 +809,14 @@
             downloadButton.textContent = originalText;
           }, 1800);
         }
+      });
+      // Electron's native image context menu crashes Codex's main process
+      // ("getOwnerBrowserWindow" of null), so right-click saves directly.
+      element.title = "右键保存图片";
+      element.addEventListener("contextmenu", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        downloadButton.click();
       });
       const continueButton = document.createElement("button");
       continueButton.type = "button";
