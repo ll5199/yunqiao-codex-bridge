@@ -1,0 +1,13 @@
+<!doctype html><html><head><meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'">
+<style>.group .actions{opacity:0}.group:hover .actions{opacity:1}</style></head><body>
+<aside id="side"></aside><main id="main"></main>
+<script>
+const threads={a:["画一只狗"],b:["你好"]};let current="a";let replyReady=location.hash!=="#late";
+function finishReply(){replyReady=true;render();}
+function render(){
+  document.getElementById("side").innerHTML=Object.keys(threads).map(t=>`<a data-app-action-sidebar-thread-id="${t}" ${t===current?'aria-current="page"':''} onclick="current='${t}';render()">${t}</a>`).join("");
+  document.getElementById("main").innerHTML=threads[current].map(m=>`<div class="group user">${m}<div class="actions opacity-0 group-hover:opacity-100"><button aria-label="Copy">u</button></div></div><div class="turn"><div class="reply">回复</div>${replyReady||current!=="a"?`<div class="reply-actions"><button aria-label="Copy">c</button><button aria-label="More">…</button></div>`:""}</div>`).join("")+`<form><textarea></textarea></form>`;
+}
+render();
+</script></body></html>

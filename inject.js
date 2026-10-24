@@ -589,8 +589,12 @@
   }
 
   async function associateImages(images, conversationKey) {
+    if (!conversationKey) return;
+    // Record the owner locally first: the page may be unable to reach the
+    // local proxy, and the card must still follow its conversation.
+    for (const image of images) image.conversationKey = conversationKey;
     const imageIDs = images.map((image) => image.id).filter(Boolean);
-    if (!conversationKey || !imageIDs.length) return;
+    if (!imageIDs.length) return;
     try {
       await fetch("http://127.0.0.1:9230/yunqiao/associate", {
         method: "POST",
@@ -668,7 +672,14 @@
     const copyButtons = visibleConversationNodes(
       "button[aria-label*='Copy' i], button[aria-label*='复制'], button[title*='Copy' i], button[title*='复制']"
     ).filter((button) => !button.closest("form, .composer-footer, [data-testid*='composer']"));
-    const actionRow = copyButtons.at(-1)?.parentElement;
+    let actionRow = copyButtons.at(-1)?.parentElement;
+    // The action row often sits in a hover-revealed wrapper (opacity 0 until
+    // hovered); insert above the outermost such wrapper so the card stays visible.
+    for (let node = actionRow; node && node !== document.body && !node.matches?.("main"); node = node.parentElement) {
+      const style = getComputedStyle(node);
+      if (/(^|\s)(opacity-0|invisible)(\s|$)|group-hover|hover:opacity/.test(String(node.className || "")) ||
+          style.opacity === "0" || style.visibility === "hidden") actionRow = node;
+    }
     if (actionRow?.parentElement) return { mode: "before", target: actionRow };
 
     const conversationRoot = document.querySelector("main") ||
@@ -764,8 +775,19 @@
     for (const image of capturedImages) {
       if (image.conversationKey && image.conversationKey !== activeKey) continue;
       const renderKey = image.key.slice(-80);
-      if (renderedImageKeys.has(renderKey) ||
-          document.querySelector(`[data-yunqiao-image-key="${CSS.escape(renderKey)}"]`)) continue;
+      // Codex re-renders the thread on navigation and drops injected cards,
+      // so only an attached card counts as rendered. The reply's action row
+      // can appear after the image arrives, so an existing card follows it.
+      const existing = document.querySelector(`[data-yunqiao-image-key="${CSS.escape(renderKey)}"]`);
+      if (existing) {
+        if (mount.mode === "before" && mount.target !== existing &&
+            existing.nextElementSibling !== mount.target && !mount.target.contains(existing)) {
+          mount.target.parentElement?.insertBefore(existing, mount.target);
+        } else if (mount.mode === "append" && existing.parentElement !== mount.target) {
+          mount.target.appendChild(existing);
+        }
+        continue;
+      }
       const card = document.createElement("div");
       card.dataset.yunqiaoImageKey = renderKey;
       card.style.cssText = "box-sizing:border-box;width:min(100%,760px);margin:12px 0;padding:10px;border:1px solid rgba(127,127,127,.35);border-radius:10px;background:rgba(127,127,127,.06)";
@@ -792,8 +814,10 @@
       downloadButton.type = "button";
       downloadButton.textContent = "下载原图";
       downloadButton.style.cssText = "border:0;padding:0;background:transparent;color:inherit;cursor:pointer;font-size:12px;text-decoration:underline";
-      downloadButton.addEventListener("click", async () => {
-        const originalText = downloadButton.textContent;
+      let downloadResetTimer = 0;
+      const saveImage = async () => {
+        clearTimeout(downloadResetTimer);
+        const originalText = "下载原图";
         downloadButton.disabled = true;
         downloadButton.textContent = "正在下载…";
         try {
@@ -819,19 +843,20 @@
         } catch {
           downloadButton.textContent = "下载失败，请重试";
         } finally {
-          setTimeout(() => {
+          downloadResetTimer = setTimeout(() => {
             downloadButton.disabled = false;
             downloadButton.textContent = originalText;
           }, 1800);
         }
-      });
+      };
+      downloadButton.addEventListener("click", saveImage);
       // Electron's native image context menu crashes Codex's main process
       // ("getOwnerBrowserWindow" of null), so right-click saves directly.
       element.title = "右键保存图片";
       element.addEventListener("contextmenu", (event) => {
         event.preventDefault();
         event.stopPropagation();
-        downloadButton.click();
+        void saveImage();
       });
       const continueButton = document.createElement("button");
       continueButton.type = "button";
