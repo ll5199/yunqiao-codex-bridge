@@ -743,6 +743,15 @@
       });
   }
 
+  function dataURLToBlob(dataURL) {
+    const [header, payload = ""] = dataURL.split(",", 2);
+    const mimeType = /^data:([^;,]+)/.exec(header)?.[1] || "image/png";
+    const binary = atob(payload);
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index++) bytes[index] = binary.charCodeAt(index);
+    return new Blob([bytes], { type: mimeType });
+  }
+
   function renderCapturedImages() {
     const activeKey = currentConversationKey();
     if (!capturedImages.length) return;
@@ -788,9 +797,15 @@
         downloadButton.disabled = true;
         downloadButton.textContent = "正在下载…";
         try {
-          const response = await fetch(image.dataURL || image.downloadURL || image.source, { cache: "no-store", credentials: "omit" });
-          if (!response.ok) throw new Error(`HTTP ${response.status}`);
-          const blob = await response.blob();
+          // Codex's CSP blocks fetch() of data: URLs, so decode inline data here.
+          let blob;
+          if (image.dataURL) {
+            blob = dataURLToBlob(image.dataURL);
+          } else {
+            const response = await fetch(image.downloadURL || image.source, { cache: "no-store", credentials: "omit" });
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            blob = await response.blob();
+          }
           const objectURL = URL.createObjectURL(blob);
           const anchor = document.createElement("a");
           anchor.href = objectURL;
