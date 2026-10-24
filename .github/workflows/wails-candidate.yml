@@ -30,7 +30,7 @@ jobs:
           npm audit --audit-level=moderate
           npm run build
       - name: Resolve Go dependencies
-        run: go mod tidy
+        run: go mod verify
       - name: Test Go code
         run: go test ./...
       - name: Install Wails CLI

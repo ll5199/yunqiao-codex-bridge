@@ -255,7 +255,7 @@ func (store *imageStore) persistLocked() {
 }
 
 func setLocalCORS(writer http.ResponseWriter) {
-	writer.Header().Set("Access-Control-Allow-Origin", "*")
+	// Access-Control-Allow-Origin is set per request by localAccessGuard.
 	writer.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 	writer.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 }

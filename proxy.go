@@ -26,14 +26,14 @@ const (
 )
 
 type apiProxy struct {
-	server    *http.Server
-	store     *imageStore
-	activity  *requestActivityTracker
- upstreamSnapshot func() string
-	done      chan struct{}
-	once      sync.Once
-	startedAt int64
-	logger    func(string, string)
+	server           *http.Server
+	store            *imageStore
+	activity         *requestActivityTracker
+	upstreamSnapshot func() string
+	done             chan struct{}
+	once             sync.Once
+	startedAt        int64
+	logger           func(string, string)
 }
 
 func startAPIProxy(rawTarget, apiKey string, logger func(string, string), availableModels ...[]string) (*apiProxy, error) {
@@ -55,9 +55,13 @@ func startAPIProxy(rawTarget, apiKey string, logger func(string, string), availa
 	smartRouter := newDynamicSmartRouter(policyManager, rawTarget, apiKey, logger, availableModels...)
 	transport.(*compatibilityTransport).fallbackModel = smartRouter.fallbackModel
 	var statusMu sync.Mutex
- upstreamStatus:=""
- activity.streamError=func(){statusMu.Lock();upstreamStatus="上游响应中断，请稍后重试或手动继续任务";statusMu.Unlock()}
- reverse := &httputil.ReverseProxy{
+	upstreamStatus := ""
+	activity.streamError = func() {
+		statusMu.Lock()
+		upstreamStatus = "上游响应中断，请稍后重试或手动继续任务"
+		statusMu.Unlock()
+	}
+	reverse := &httputil.ReverseProxy{
 		FlushInterval: 30 * time.Millisecond,
 		Transport:     transport,
 		Director: func(request *http.Request) {
@@ -88,7 +92,13 @@ func startAPIProxy(rawTarget, apiKey string, logger func(string, string), availa
 			request.Header.Set("X-Yunqiao-Bridge", appVersion)
 		},
 		ModifyResponse: func(response *http.Response) error {
- statusMu.Lock(); if response.StatusCode>=400 { upstreamStatus=fmt.Sprintf("上游请求失败（HTTP %d）",response.StatusCode) } else { upstreamStatus="" }; statusMu.Unlock()
+			statusMu.Lock()
+			if response.StatusCode >= 400 {
+				upstreamStatus = fmt.Sprintf("上游请求失败（HTTP %d）", response.StatusCode)
+			} else {
+				upstreamStatus = ""
+			}
+			statusMu.Unlock()
 			if logger != nil {
 				logger("proxy.response", fmt.Sprintf(
 					"status=%d method=%s path=%s content_type=%s",
@@ -122,14 +132,16 @@ func startAPIProxy(rawTarget, apiKey string, logger func(string, string), availa
 			return nil
 		},
 		ErrorHandler: func(writer http.ResponseWriter, request *http.Request, proxyErr error) {
-			statusMu.Lock(); upstreamStatus="上游连接失败或超时"; statusMu.Unlock()
- activity.finish(requestActivityID(request))
+			statusMu.Lock()
+			upstreamStatus = "上游连接失败或超时"
+			statusMu.Unlock()
+			activity.finish(requestActivityID(request))
 			if logger != nil {
 				logger("proxy.error", proxyErr.Error())
 			}
 			var netError net.Error
 			if errors.As(proxyErr, &netError) && netError.Timeout() {
-				http.Error(writer, "Yunqiao Bridge upstream response timeout (60s)", http.StatusGatewayTimeout)
+				http.Error(writer, fmt.Sprintf("Yunqiao Bridge upstream response timeout (%s)", upstreamHeaderTimeout), http.StatusGatewayTimeout)
 				return
 			}
 			http.Error(writer, "Yunqiao Bridge proxy error", http.StatusBadGateway)
@@ -138,7 +150,6 @@ func startAPIProxy(rawTarget, apiKey string, logger func(string, string), availa
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/yunqiao/health", func(writer http.ResponseWriter, _ *http.Request) {
-		writer.Header().Set("Access-Control-Allow-Origin", "*")
 		writer.Header().Set("Content-Type", "application/json")
 		policy := policyManager.snapshot()
 		_ = json.NewEncoder(writer).Encode(map[string]any{
@@ -190,12 +201,12 @@ func startAPIProxy(rawTarget, apiKey string, logger func(string, string), availa
 	mux.Handle("/", reverse)
 
 	server := &http.Server{
-		Handler:           mux,
+		Handler:           localAccessGuard(mux),
 		ReadHeaderTimeout: 15 * time.Second,
 	}
 	proxy := &apiProxy{
- upstreamSnapshot:func()string{statusMu.Lock();defer statusMu.Unlock();return upstreamStatus},
-		server: server, store: store, activity: activity, done: proxyDone,
+		upstreamSnapshot: func() string { statusMu.Lock(); defer statusMu.Unlock(); return upstreamStatus },
+		server:           server, store: store, activity: activity, done: proxyDone,
 		startedAt: time.Now().UnixMilli(), logger: logger,
 	}
 	policyManager.start(proxyDone)
@@ -795,4 +806,57 @@ func looksLikeImageURL(value string) bool {
 		}
 	}
 	return false
+}
+
+// localAccessGuard keeps web pages from using the bridge (and the API key it
+// attaches) through the local port. DNS rebinding is blocked by requiring a
+// loopback Host, and cross-site browser requests by rejecting web origins
+// other than loopback. Codex itself sends no Origin or an app:// style one.
+func localAccessGuard(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if !isLoopbackHost(request.Host) {
+			http.Error(writer, "forbidden host", http.StatusForbidden)
+			return
+		}
+		origin := strings.TrimSpace(request.Header.Get("Origin"))
+		if !isAllowedLocalOrigin(origin) {
+			http.Error(writer, "forbidden origin", http.StatusForbidden)
+			return
+		}
+		if origin != "" {
+			writer.Header().Set("Access-Control-Allow-Origin", origin)
+			writer.Header().Add("Vary", "Origin")
+		}
+		next.ServeHTTP(writer, request)
+	})
+}
+
+func isLoopbackHost(hostport string) bool {
+	host := hostport
+	if parsedHost, _, err := net.SplitHostPort(hostport); err == nil {
+		host = parsedHost
+	}
+	host = strings.Trim(strings.ToLower(host), "[]")
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+func isAllowedLocalOrigin(origin string) bool {
+	if origin == "" || origin == "null" {
+		return true
+	}
+	parsed, err := url.Parse(origin)
+	if err != nil {
+		return false
+	}
+	switch strings.ToLower(parsed.Scheme) {
+	case "http", "https", "ws", "wss":
+		return isLoopbackHost(parsed.Host)
+	default:
+		// Electron app://, file:// and similar non-web origins.
+		return parsed.Scheme != ""
+	}
 }

@@ -8,8 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"log"
- "os"
- "path/filepath"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -24,31 +24,31 @@ import (
 var wailsAssets embed.FS
 
 type BridgeApp struct {
-	mu          sync.Mutex
-	opMu        sync.Mutex
-	ctx         context.Context
-	baseURL     string
-	apiKey      string
-	models      []string
-	model       string
-	account     *accountClient
+	mu           sync.Mutex
+	opMu         sync.Mutex
+	ctx          context.Context
+	baseURL      string
+	apiKey       string
+	models       []string
+	model        string
+	account      *accountClient
 	entitlements accountEntitlements
-	cloudModels map[string][]string
-	status      string
+	cloudModels  map[string][]string
+	status       string
 }
 
 type bridgeViewState struct {
-	BaseURL        string          `json:"baseURL"`
-	HasAPIKey      bool            `json:"hasAPIKey"`
-	Models         []string        `json:"models"`
-	SelectedModel  string          `json:"selectedModel"`
-	Version        string          `json:"version"`
-	UpstreamStatus string `json:"upstreamStatus"`
- Running        bool            `json:"running"`
-	ProxyRunning   bool            `json:"proxyRunning"`
-	Status         string          `json:"status"`
-	Connection     string          `json:"connection"`
-	Cloud          cloudViewState  `json:"cloud"`
+	BaseURL        string         `json:"baseURL"`
+	HasAPIKey      bool           `json:"hasAPIKey"`
+	Models         []string       `json:"models"`
+	SelectedModel  string         `json:"selectedModel"`
+	Version        string         `json:"version"`
+	UpstreamStatus string         `json:"upstreamStatus"`
+	Running        bool           `json:"running"`
+	ProxyRunning   bool           `json:"proxyRunning"`
+	Status         string         `json:"status"`
+	Connection     string         `json:"connection"`
+	Cloud          cloudViewState `json:"cloud"`
 }
 
 type cloudViewState struct {
@@ -110,8 +110,12 @@ func (app *BridgeApp) startup(ctx context.Context) {
 		app.setStatus("已读取配置，但 API Key 解密失败，请重新输入并保存。")
 		return
 	}
-	if result,e:=os.ReadFile(filepath.Join(applicationDirectory(),"update-result.txt")); e==nil { app.setStatus(string(result)); _=os.Remove(filepath.Join(applicationDirectory(),"update-result.txt")); return }
- if app.apiKey != "" {
+	if result, e := os.ReadFile(filepath.Join(applicationDirectory(), "update-result.txt")); e == nil {
+		app.setStatus(string(result))
+		_ = os.Remove(filepath.Join(applicationDirectory(), "update-result.txt"))
+		return
+	}
+	if app.apiKey != "" {
 		app.setStatus(fmt.Sprintf("已载入本机加密配置和 %d 个模型。", len(app.models)))
 	}
 }
@@ -133,17 +137,17 @@ func (app *BridgeApp) GetState() bridgeViewState {
 		connection = "bridge"
 	}
 	return bridgeViewState{
-		BaseURL:       app.baseURL,
-		HasAPIKey:     app.apiKey != "",
-		Models:        append([]string(nil), app.models...),
-		SelectedModel: app.model,
-		Version:       appVersion,
-		Status:        app.status,
-        Running: codexIsRunning(),
-        ProxyRunning: bridgeProxyRunning(),
- UpstreamStatus: bridgeUpstreamStatus(),
-		Connection:    connection,
-		Cloud:         app.cloudStateLocked(),
+		BaseURL:        app.baseURL,
+		HasAPIKey:      app.apiKey != "",
+		Models:         append([]string(nil), app.models...),
+		SelectedModel:  app.model,
+		Version:        appVersion,
+		Status:         app.status,
+		Running:        codexIsRunning(),
+		ProxyRunning:   bridgeProxyRunning(),
+		UpstreamStatus: bridgeUpstreamStatus(),
+		Connection:     connection,
+		Cloud:          app.cloudStateLocked(),
 	}
 }
 
@@ -251,8 +255,10 @@ func (app *BridgeApp) LogoutCloud() cloudViewState {
 func (app *BridgeApp) Launch(connection, provider, selectedModel, baseURL, apiKey string) (string, error) {
 	app.opMu.Lock()
 	defer app.opMu.Unlock()
-	if codexIsRunning() { return "Codex 已在运行，请先退出 Codex 后再启动。", nil }
- if connection == "official" {
+	if codexIsRunning() {
+		return "Codex 已在运行，请先退出 Codex 后再启动。", nil
+	}
+	if connection == "official" {
 		return app.launchOfficial()
 	}
 	return app.launchRouted(connection, provider, selectedModel, baseURL, apiKey)
@@ -343,17 +349,21 @@ func (app *BridgeApp) launchWithCredentials(baseURL, apiKey string, models []str
 	menuResult := make(chan error, 1)
 	go func() { menuResult <- localizeNativeMenu(inspectorPort) }()
 	keepProxy = true
- if err := injectIntoCodex(cdpPort, models, selectedModel, func(s string) { app.setStatus(s) }); err != nil {
-        diagnosticLog("launch.injection_failed", err.Error())
-        if !codexIsRunning() { keepProxy=false; return "", fmt.Errorf("Codex 进程已退出：%w",err) }
-        go maintainCodexInjection(cdpPort, models, selectedModel, proxy.done, diagnosticLog)
-        go syncProxyImagesToCodex(cdpPort,proxy)
-        message:="Codex 已打开，本机代理运行中；模型列表与汉化未就绪，请导出诊断日志。"
-        app.setStatus(message); return message,nil
-    }
+	injectErr := injectIntoCodex(cdpPort, models, selectedModel, func(s string) { app.setStatus(s) })
+	if injectErr != nil {
+		diagnosticLog("launch.injection_failed", injectErr.Error())
+		if !codexIsRunning() {
+			keepProxy = false
+			return "", fmt.Errorf("Codex 进程已退出：%w", injectErr)
+		}
+	}
 	go syncProxyImagesToCodex(cdpPort, proxy)
 	go maintainCodexInjection(cdpPort, models, selectedModel, proxy.done, diagnosticLog)
-	keepProxy = true
+	if injectErr != nil {
+		message := "Codex 已打开，本机代理运行中；模型列表与汉化未就绪，请导出诊断日志。"
+		app.setStatus(message)
+		return message, nil
+	}
 
 	app.setStatus("正在确认 Codex 中文界面…")
 	localeState, localeErr := waitForChineseLocalization(cdpPort, 15*time.Second)
@@ -365,8 +375,10 @@ func (app *BridgeApp) launchWithCredentials(baseURL, apiKey string, models []str
 		menuResult = make(chan error, 1)
 		go func() { menuResult <- localizeNativeMenu(inspectorPort) }()
 		if err := injectIntoCodex(cdpPort, models, selectedModel, func(s string) { app.setStatus(s) }); err != nil {
-			diagnosticLog("launch.reinjection_failed",err.Error())
- message:="Codex 已重启，代理运行中；重新注入未就绪。"; app.setStatus(message); return message,nil
+			diagnosticLog("launch.reinjection_failed", err.Error())
+			message := "Codex 已重启，代理运行中；重新注入未就绪。"
+			app.setStatus(message)
+			return message, nil
 		}
 		localeState, localeErr = waitForChineseLocalization(cdpPort, 15*time.Second)
 	}
@@ -405,8 +417,14 @@ func (app *BridgeApp) launchOfficial() (string, error) {
 	menuResult := make(chan error, 1)
 	go func() { menuResult <- localizeNativeMenu(inspectorPort) }()
 	if err := injectLocalizationIntoCodex(cdpPort, func(s string) { app.setStatus(s) }); err != nil {
- diagnosticLog("launch.native_injection_failed",err.Error()); if !codexIsRunning() { return "",err }; message:="官方 Codex 已打开，汉化未就绪。"; app.setStatus(message); return message,nil
- }
+		diagnosticLog("launch.native_injection_failed", err.Error())
+		if !codexIsRunning() {
+			return "", err
+		}
+		message := "官方 Codex 已打开，汉化未就绪。"
+		app.setStatus(message)
+		return message, nil
+	}
 	locale, err := waitForChineseLocalization(cdpPort, 15*time.Second)
 	if err == nil && locale.RestartRequired {
 		app.setStatus("正在完成首次中文设置并重启 Codex…")
@@ -448,7 +466,7 @@ func (app *BridgeApp) CheckUpdates() (updateViewState, error) {
 	return updateViewState{
 		Current: appVersion, Latest: manifest.Version,
 		Available: compareVersions(manifest.Version, appVersion) > 0,
-		Notes: manifest.Notes,
+		Notes:     manifest.Notes,
 	}, nil
 }
 
@@ -534,23 +552,60 @@ func (app *BridgeApp) setStatus(status string) {
 }
 
 func bridgeProxyRunning() bool {
- proxyMutex.Lock(); defer proxyMutex.Unlock()
- if activeProxy==nil { return false }
- select { case <-activeProxy.done: return false; default: return true }
+	proxyMutex.Lock()
+	defer proxyMutex.Unlock()
+	if activeProxy == nil {
+		return false
+	}
+	select {
+	case <-activeProxy.done:
+		return false
+	default:
+		return true
+	}
 }
-func (app *BridgeApp) ExportDiagnostics() (string,error) {
- path,err:=wailsruntime.SaveFileDialog(app.context(),wailsruntime.SaveDialogOptions{Title:"导出诊断日志",DefaultFilename:"Yunqiao-diagnostics.txt",Filters:[]wailsruntime.FileFilter{{DisplayName:"文本日志",Pattern:"*.txt"}}})
- if err!=nil || path=="" { return "",err }
- data,err:=os.ReadFile(diagnosticLogPath()); if err!=nil && !os.IsNotExist(err) { return "",err }
- if len(data)>2<<20 { data=data[len(data)-(2<<20):] }
- app.mu.Lock(); secrets:=[]string{app.apiKey};for _,key:=range app.entitlements.ProviderKeys { secrets=append(secrets,key) }; app.mu.Unlock()
- state:=app.GetState()
- header:=fmt.Sprintf("Yunqiao version=%s running=%t proxy=%t\n",appVersion,state.Running,state.ProxyRunning)
- text:=redactDiagnostics(header+string(data),secrets...)
- logs,_:=filepath.Glob(filepath.Join(applicationDirectory(),"updates","*.log"))
- for _,name:=range logs { b,e:=os.ReadFile(name); if e==nil { if len(b)>64<<10 { b=b[len(b)-(64<<10):] }; text+="\nUpdate log:\n"+redactDiagnostics(string(b),secrets...) } }
- if err:=os.WriteFile(path,[]byte(text),0600); err!=nil { return "",err }
- return "诊断日志已导出（凭据已脱敏）。",nil
+func (app *BridgeApp) ExportDiagnostics() (string, error) {
+	path, err := wailsruntime.SaveFileDialog(app.context(), wailsruntime.SaveDialogOptions{Title: "导出诊断日志", DefaultFilename: "Yunqiao-diagnostics.txt", Filters: []wailsruntime.FileFilter{{DisplayName: "文本日志", Pattern: "*.txt"}}})
+	if err != nil || path == "" {
+		return "", err
+	}
+	data, err := os.ReadFile(diagnosticLogPath())
+	if err != nil && !os.IsNotExist(err) {
+		return "", err
+	}
+	if len(data) > 2<<20 {
+		data = data[len(data)-(2<<20):]
+	}
+	app.mu.Lock()
+	secrets := []string{app.apiKey}
+	for _, key := range app.entitlements.ProviderKeys {
+		secrets = append(secrets, key)
+	}
+	app.mu.Unlock()
+	state := app.GetState()
+	header := fmt.Sprintf("Yunqiao version=%s running=%t proxy=%t\n", appVersion, state.Running, state.ProxyRunning)
+	text := redactDiagnostics(header+string(data), secrets...)
+	logs, _ := filepath.Glob(filepath.Join(applicationDirectory(), "updates", "*.log"))
+	for _, name := range logs {
+		b, e := os.ReadFile(name)
+		if e == nil {
+			if len(b) > 64<<10 {
+				b = b[len(b)-(64<<10):]
+			}
+			text += "\nUpdate log:\n" + redactDiagnostics(string(b), secrets...)
+		}
+	}
+	if err := os.WriteFile(path, []byte(text), 0600); err != nil {
+		return "", err
+	}
+	return "诊断日志已导出（凭据已脱敏）。", nil
 }
 
-func bridgeUpstreamStatus() string { proxyMutex.Lock();defer proxyMutex.Unlock();if activeProxy!=nil && activeProxy.upstreamSnapshot!=nil { return activeProxy.upstreamSnapshot() };return "" }
+func bridgeUpstreamStatus() string {
+	proxyMutex.Lock()
+	defer proxyMutex.Unlock()
+	if activeProxy != nil && activeProxy.upstreamSnapshot != nil {
+		return activeProxy.upstreamSnapshot()
+	}
+	return ""
+}

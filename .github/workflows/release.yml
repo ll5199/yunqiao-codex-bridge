@@ -58,7 +58,7 @@ jobs:
       - name: Resolve Go dependencies and test
         if: steps.existing.outputs.exists != 'true'
         run: |
-          go mod tidy
+          go mod verify
           go test ./...
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           go vet -unsafeptr=false ./...
