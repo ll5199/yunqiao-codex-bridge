@@ -267,3 +267,12 @@ func stopTrackedCodexForRestart() error {
 	}
 	return nil
 }
+
+func init() {
+	revealSavedFile = func(path string) {
+		command := exec.Command("explorer.exe")
+		// Explorer parses /select itself and needs the quotes around the path.
+		command.SysProcAttr = &syscall.SysProcAttr{CmdLine: `explorer.exe /select,"` + path + `"`}
+		_ = command.Start()
+	}
+}

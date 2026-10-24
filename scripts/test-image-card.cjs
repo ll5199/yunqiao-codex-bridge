@@ -32,10 +32,13 @@ let failures = 0; const check = (ok, name) => { console.log((ok ? 'PASS ' : 'FAI
   check(!(await visible()), 'card not shown in thread b');
   await page.click('[data-app-action-sidebar-thread-id="a"]'); await page.mouse.move(0, 0); await page.waitForTimeout(1500);
   check(await visible(), 'card shown again after switching back to thread a');
-  const [download] = await Promise.all([page.waitForEvent('download', { timeout: 5000 }).catch(() => null), page.click('text=下载原图')]);
-  check(!!download && download.suggestedFilename() === 'dog.png', 'download button saves dog.png');
-  const [download2] = await Promise.all([page.waitForEvent('download', { timeout: 5000 }).catch(() => null), page.click('[data-yunqiao-image-key] img', { button: 'right' })]);
-  check(!!download2, 'right-click saves the image');
+  // Saving is done by the bridge: the page only queues the image ID.
+  await page.click('text=下载原图');
+  check(JSON.stringify(await page.evaluate(() => window.__yunqiaoTakeDownloadRequests())) === '["img1"]', 'download button queues the image for the bridge');
+  await page.evaluate(() => window.__yunqiaoDownloadResult({ id: 'img1', ok: true, path: 'C:\\Users\\me\\Downloads\\dog.png' }));
+  check(await page.isVisible('text=已保存到“下载”：dog.png'), 'button shows where the file was saved');
+  await page.click('[data-yunqiao-image-key] img', { button: 'right' });
+  check(JSON.stringify(await page.evaluate(() => window.__yunqiaoTakeDownloadRequests())) === '["img1"]', 'right-click queues the image even right after a save');
   check(errors.length === 0, 'no page errors ' + JSON.stringify(errors));
   await browser.close(); server.close(); process.exit(failures ? 1 : 0);
 })();

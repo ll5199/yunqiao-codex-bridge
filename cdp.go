@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -440,6 +441,7 @@ func syncProxyImagesToCodex(port int, proxy *apiProxy) {
 				strings.HasPrefix(target.URL, "devtools://") {
 				continue
 			}
+			handleImageDownloadRequests(target.WebSocketDebuggerURL, proxy)
 			targetSent := sent[target.ID]
 			if targetSent == nil {
 				targetSent = make(map[string]bool)
@@ -507,6 +509,112 @@ func imagesWithInlineData(images []proxyImage) []deliveredImage {
 		delivered = append(delivered, item)
 	}
 	return delivered
+}
+
+// revealSavedFile shows a saved download to the user (Explorer on Windows).
+var revealSavedFile = func(string) {}
+
+// Codex suppresses downloads started by the page, so the page queues image
+// IDs and the bridge copies the stored originals into the Downloads folder.
+func handleImageDownloadRequests(webSocketURL string, proxy *apiProxy) {
+	value, err := evaluateTargetValue(webSocketURL,
+		"(() => typeof window.__yunqiaoTakeDownloadRequests === 'function' ? window.__yunqiaoTakeDownloadRequests() : [])()")
+	if err != nil {
+		return
+	}
+	requests, _ := value.([]any)
+	for _, raw := range requests {
+		id, _ := raw.(string)
+		if id == "" {
+			continue
+		}
+		path, err := saveImageToDownloads(proxy.store, id, imageDownloadDirectory())
+		result := map[string]any{"id": id, "ok": err == nil, "path": path}
+		if err != nil {
+			result["error"] = err.Error()
+		} else {
+			revealSavedFile(path)
+		}
+		if proxy.logger != nil {
+			proxy.logger("image.download", fmt.Sprintf("id=%s ok=%t", safeLogID(id), err == nil))
+		}
+		encoded, _ := json.Marshal(result)
+		_ = evaluateTarget(webSocketURL, "window.__yunqiaoDownloadResult?.("+string(encoded)+")")
+	}
+}
+
+func imageDownloadDirectory() string {
+	home := os.Getenv("USERPROFILE")
+	if home == "" {
+		home, _ = os.UserHomeDir()
+	}
+	return filepath.Join(home, "Downloads")
+}
+
+func saveImageToDownloads(store *imageStore, id, directory string) (string, error) {
+	var found *proxyImage
+	for _, image := range store.list() {
+		if image.ID == id {
+			image := image
+			found = &image
+			break
+		}
+	}
+	if found == nil || found.FilePath == "" {
+		return "", errors.New("找不到这张图片的原图")
+	}
+	data, err := os.ReadFile(found.FilePath)
+	if err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(directory, 0o755); err != nil {
+		return "", err
+	}
+	name := filepath.Base(found.FileName)
+	if name == "" || name == "." {
+		name = "yunqiao-" + id + ".png"
+	}
+	ext := filepath.Ext(name)
+	stem := strings.TrimSuffix(name, ext)
+	for index := 0; ; index++ {
+		candidate := filepath.Join(directory, name)
+		if index > 0 {
+			candidate = filepath.Join(directory, fmt.Sprintf("%s (%d)%s", stem, index, ext))
+		}
+		file, err := os.OpenFile(candidate, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+		if errors.Is(err, os.ErrExist) {
+			continue
+		}
+		if err != nil {
+			return "", err
+		}
+		_, writeErr := file.Write(data)
+		closeErr := file.Close()
+		if writeErr != nil {
+			return "", writeErr
+		}
+		return candidate, closeErr
+	}
+}
+
+func evaluateTargetValue(webSocketURL, expression string) (any, error) {
+	socket, err := dialWebSocket(webSocketURL)
+	if err != nil {
+		return nil, err
+	}
+	defer socket.Close()
+	result, err := socket.command("Runtime.evaluate", map[string]any{
+		"expression":    expression,
+		"returnByValue": true,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if exception, ok := result["exceptionDetails"]; ok && exception != nil {
+		return nil, errors.New("页面脚本异常")
+	}
+	remote, _ := result["result"].(map[string]any)
+	return remote["value"], nil
 }
 
 func evaluateTarget(webSocketURL, expression string) error {

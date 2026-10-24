@@ -754,6 +754,15 @@
       });
   }
 
+  const imageDownloadRequests = [];
+  const imageDownloadCallbacks = new Map();
+  window.__yunqiaoTakeDownloadRequests = () => imageDownloadRequests.splice(0);
+  window.__yunqiaoDownloadResult = (result) => {
+    const callback = imageDownloadCallbacks.get(result?.id);
+    imageDownloadCallbacks.delete(result?.id);
+    callback?.(result);
+  };
+
   function dataURLToBlob(dataURL) {
     const [header, payload = ""] = dataURL.split(",", 2);
     const mimeType = /^data:([^;,]+)/.exec(header)?.[1] || "image/png";
@@ -819,6 +828,22 @@
         clearTimeout(downloadResetTimer);
         const originalText = "下载原图";
         downloadButton.disabled = true;
+        // Codex drops page-initiated downloads; the bridge saves the original
+        // into the Downloads folder and reports back through DevTools.
+        if (image.id) {
+          downloadButton.textContent = "正在保存…";
+          imageDownloadRequests.push(image.id);
+          imageDownloadCallbacks.set(image.id, (result) => {
+            downloadButton.textContent = result.ok
+              ? `已保存到“下载”：${String(result.path || "").split(/[\\/]/).pop()}`
+              : "保存失败，请重试";
+            downloadResetTimer = setTimeout(() => {
+              downloadButton.disabled = false;
+              downloadButton.textContent = originalText;
+            }, 4000);
+          });
+          return;
+        }
         downloadButton.textContent = "正在下载…";
         try {
           // Codex's CSP blocks fetch() of data: URLs, so decode inline data here.

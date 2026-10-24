@@ -107,3 +107,27 @@ func TestImagesWithInlineDataEmbedsFile(t *testing.T) {
 		t.Fatalf("missing file should not inline data")
 	}
 }
+
+func TestSaveImageToDownloadsKeepsExistingFiles(t *testing.T) {
+	store := newPersistentImageStore(t.TempDir(), nil)
+	png := "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+	if !store.add(png) {
+		t.Fatal("image not stored")
+	}
+	id := store.list()[0].ID
+	directory := t.TempDir()
+	first, err := saveImageToDownloads(store, id, directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := saveImageToDownloads(store, id, directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first == second || !strings.Contains(filepath.Base(second), "(1)") {
+		t.Fatalf("second save should get a new name: %s %s", first, second)
+	}
+	if _, err := saveImageToDownloads(store, "missing", directory); err == nil {
+		t.Fatal("missing image should fail")
+	}
+}
