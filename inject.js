@@ -706,6 +706,34 @@
     setTimeout(() => composer?.focus?.(), 250);
   }
 
+  // Codex's CSP may refuse <img> loads from the local proxy while still
+  // allowing fetch, so local images are shown through a blob: URL.
+  const capturedImageBlobURLs = new Map();
+  function setCapturedImageSource(element, source) {
+    if (!/^http:\/\/127\.0\.0\.1:9230\//.test(source || "")) {
+      element.src = source;
+      return;
+    }
+    const cached = capturedImageBlobURLs.get(source);
+    if (cached) {
+      element.src = cached;
+      return;
+    }
+    fetch(source, { credentials: "omit" })
+      .then((response) => {
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        return response.blob();
+      })
+      .then((blob) => {
+        const objectURL = URL.createObjectURL(blob);
+        capturedImageBlobURLs.set(source, objectURL);
+        element.src = objectURL;
+      })
+      .catch(() => {
+        element.src = source;
+      });
+  }
+
   function renderCapturedImages() {
     const activeKey = currentConversationKey();
     if (!capturedImages.length) return;
@@ -735,7 +763,7 @@
       header.append(title, collapseButton);
       const body = document.createElement("div");
       const element = document.createElement("img");
-      element.src = image.source;
+      setCapturedImageSource(element, image.source);
       element.alt = "生成的图片";
       element.loading = "eager";
       element.style.cssText = "display:block;width:auto;max-width:100%;max-height:480px;border-radius:8px;object-fit:contain";
