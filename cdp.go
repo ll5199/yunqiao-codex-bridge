@@ -15,6 +15,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -454,7 +455,7 @@ func syncProxyImagesToCodex(port int, proxy *apiProxy) {
 			if len(pending) == 0 {
 				continue
 			}
-			payload, err := json.Marshal(pending)
+			payload, err := json.Marshal(imagesWithInlineData(pending))
 			if err != nil {
 				continue
 			}
@@ -478,6 +479,34 @@ func syncProxyImagesToCodex(port int, proxy *apiProxy) {
 			}
 		}
 	}
+}
+
+// maxInlineImageBytes bounds the data: URL sent over DevTools per image.
+const maxInlineImageBytes = 16 << 20
+
+type deliveredImage struct {
+	proxyImage
+	DataURL string `json:"data_url,omitempty"`
+}
+
+// The Codex page may be unable to load http://127.0.0.1 resources (CSP or
+// private network rules), so the image bytes travel with the DevTools call.
+func imagesWithInlineData(images []proxyImage) []deliveredImage {
+	delivered := make([]deliveredImage, 0, len(images))
+	for _, image := range images {
+		item := deliveredImage{proxyImage: image}
+		if info, err := os.Stat(image.FilePath); err == nil && info.Size() <= maxInlineImageBytes {
+			if data, err := os.ReadFile(image.FilePath); err == nil {
+				mimeType := image.MimeType
+				if mimeType == "" {
+					mimeType = "image/png"
+				}
+				item.DataURL = "data:" + mimeType + ";base64," + base64.StdEncoding.EncodeToString(data)
+			}
+		}
+		delivered = append(delivered, item)
+	}
+	return delivered
 }
 
 func evaluateTarget(webSocketURL, expression string) error {

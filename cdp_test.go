@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -89,5 +91,19 @@ func TestLocalizationOnlyExpressionDoesNotInjectModels(t *testing.T) {
 		if !strings.Contains(expression, expected) {
 			t.Fatalf("localization-only expression is missing %q", expected)
 		}
+	}
+}
+
+func TestImagesWithInlineDataEmbedsFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "a.png")
+	if err := os.WriteFile(path, []byte("png-bytes"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	delivered := imagesWithInlineData([]proxyImage{{ID: "a", MimeType: "image/png", FilePath: path}, {ID: "missing"}})
+	if delivered[0].DataURL != "data:image/png;base64,cG5nLWJ5dGVz" {
+		t.Fatalf("unexpected data url %q", delivered[0].DataURL)
+	}
+	if delivered[1].DataURL != "" {
+		t.Fatalf("missing file should not inline data")
 	}
 }

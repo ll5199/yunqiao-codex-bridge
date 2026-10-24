@@ -614,6 +614,7 @@
       id: metadata.id || "",
       source,
       downloadURL: metadata.download_url || metadata.downloadURL || source,
+      dataURL: metadata.data_url || metadata.dataURL || "",
       fileName: metadata.file_name || metadata.fileName || "yunqiao-image.png",
       conversationKey: metadata.conversation_key || metadata.conversationKey || "",
       createdAt: Number(metadata.created_at || metadata.createdAt || Date.now()),
@@ -763,7 +764,8 @@
       header.append(title, collapseButton);
       const body = document.createElement("div");
       const element = document.createElement("img");
-      setCapturedImageSource(element, image.source);
+      if (image.dataURL) element.src = image.dataURL;
+      else setCapturedImageSource(element, image.source);
       element.alt = "生成的图片";
       element.loading = "eager";
       element.style.cssText = "display:block;width:auto;max-width:100%;max-height:480px;border-radius:8px;object-fit:contain";
@@ -778,7 +780,7 @@
         downloadButton.disabled = true;
         downloadButton.textContent = "正在下载…";
         try {
-          const response = await fetch(image.downloadURL || image.source, { cache: "no-store", credentials: "omit" });
+          const response = await fetch(image.dataURL || image.downloadURL || image.source, { cache: "no-store", credentials: "omit" });
           if (!response.ok) throw new Error(`HTTP ${response.status}`);
           const blob = await response.blob();
           const objectURL = URL.createObjectURL(blob);
