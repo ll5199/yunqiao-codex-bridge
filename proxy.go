@@ -201,7 +201,7 @@ func startAPIProxy(rawTarget, apiKey string, logger func(string, string), availa
 	mux.Handle("/", reverse)
 
 	server := &http.Server{
-		Handler:           localAccessGuard(mux),
+		Handler:           localAccessGuard(mux, logger),
 		ReadHeaderTimeout: 15 * time.Second,
 	}
 	proxy := &apiProxy{
@@ -812,14 +812,20 @@ func looksLikeImageURL(value string) bool {
 // attaches) through the local port. DNS rebinding is blocked by requiring a
 // loopback Host, and cross-site browser requests by rejecting web origins
 // other than loopback. Codex itself sends no Origin or an app:// style one.
-func localAccessGuard(next http.Handler) http.Handler {
+func localAccessGuard(next http.Handler, logger func(string, string)) http.Handler {
 	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		if !isLoopbackHost(request.Host) {
+			if logger != nil {
+				logger("proxy.rejected_host", fmt.Sprintf("host=%q path=%s", request.Host, request.URL.Path))
+			}
 			http.Error(writer, "forbidden host", http.StatusForbidden)
 			return
 		}
 		origin := strings.TrimSpace(request.Header.Get("Origin"))
 		if !isAllowedLocalOrigin(origin) {
+			if logger != nil {
+				logger("proxy.rejected_origin", fmt.Sprintf("origin=%q path=%s", origin, request.URL.Path))
+			}
 			http.Error(writer, "forbidden origin", http.StatusForbidden)
 			return
 		}

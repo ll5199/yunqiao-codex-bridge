@@ -840,7 +840,7 @@ func TestGrokConcurrencyErrorIsExplained(t *testing.T) {
 func TestLocalAccessGuard(t *testing.T) {
 	handler := localAccessGuard(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 		writer.WriteHeader(http.StatusNoContent)
-	}))
+	}), nil)
 	cases := []struct {
 		host, origin string
 		want         int
