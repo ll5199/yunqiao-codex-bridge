@@ -79,6 +79,13 @@ func launchCodexApplication(install codexInstallation, arguments string) error {
 	if err := stopTrackedCodexForRestart(); err != nil {
 		return err
 	}
+	if arguments != "" {
+		// Codex is single-instance: a leftover background process would take
+		// over this activation without the debugging port, so close it first.
+		if err := stopUntrackedCodexProcesses(install.AUMID); err != nil {
+			return err
+		}
+	}
 	diagnosticLog("launch.application_entry", install.AUMID)
 	pid, err := activateAndConfirmCodex(install.AUMID, arguments, activateApplication, officialCodexProcessAlive, 10*time.Second)
 	if err != nil {
@@ -192,6 +199,49 @@ func codexIsRunning() bool {
 	}
 	codexProcessHandle, codexProcessPID = 0, 0
 	return false
+}
+
+// runningOfficialCodexPIDs lists live Codex/ChatGPT processes that belong to
+// the official package, including ones this bridge did not start.
+func runningOfficialCodexPIDs(aumid string) []uint32 {
+	snapshot, err := syscall.CreateToolhelp32Snapshot(syscall.TH32CS_SNAPPROCESS, 0)
+	if err != nil {
+		return nil
+	}
+	defer syscall.CloseHandle(snapshot)
+	var entry syscall.ProcessEntry32
+	entry.Size = uint32(unsafe.Sizeof(entry))
+	var pids []uint32
+	for err = syscall.Process32First(snapshot, &entry); err == nil; err = syscall.Process32Next(snapshot, &entry) {
+		name := strings.ToLower(syscall.UTF16ToString(entry.ExeFile[:]))
+		if (name == "codex.exe" || name == "chatgpt.exe") && officialCodexProcessAlive(entry.ProcessID, aumid) {
+			pids = append(pids, entry.ProcessID)
+		}
+	}
+	return pids
+}
+
+func stopUntrackedCodexProcesses(aumid string) error {
+	pids := runningOfficialCodexPIDs(aumid)
+	if len(pids) == 0 {
+		return nil
+	}
+	diagnosticLog("launch.stopping_leftover_codex", fmt.Sprintf("pids=%v", pids))
+	for _, pid := range pids {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		command := exec.CommandContext(ctx, "taskkill.exe", "/F", "/T", "/PID", fmt.Sprint(pid))
+		command.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+		_ = command.Run()
+		cancel()
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for len(runningOfficialCodexPIDs(aumid)) > 0 {
+		if !time.Now().Before(deadline) {
+			return errors.New("后台仍有官方 Codex 进程未退出，请在任务管理器中结束 Codex 后重试")
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return nil
 }
 
 func stopTrackedCodexForRestart() error {
