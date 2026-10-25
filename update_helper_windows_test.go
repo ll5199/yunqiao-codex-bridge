@@ -46,8 +46,9 @@ func TestInstallStagedFileReplacesRunningExecutable(t *testing.T) {
 	}
 	// The plain replace is what failed for users ("Access is denied").
 	if err := replaceWindowsFile(newPath, current); err == nil {
-		t.Log("plain replace unexpectedly succeeded; rename-aside path not exercised")
-		return
+		t.Fatal("plain replace of a running exe succeeded; the failure users hit was not reproduced")
+	} else {
+		t.Logf("plain replace of the running exe fails as for users: %v", err)
 	}
 	var logged []string
 	err = installStagedFile(newPath, current, func(format string, items ...any) { logged = append(logged, format) })
