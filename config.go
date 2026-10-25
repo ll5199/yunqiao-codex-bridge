@@ -17,7 +17,7 @@ import (
 const (
 	defaultBaseURL = "https://api.velyn65.com/v1"
 	providerID     = "yunqiao_bridge"
-	appVersion     = "1.6.5"
+	appVersion     = "1.6.6"
 )
 
 type appConfig struct {
@@ -26,7 +26,7 @@ type appConfig struct {
 	Models              []string `json:"models"`
 	DefaultModel        string   `json:"default_model"`
 	PreserveChatGPTAuth *bool    `json:"preserve_chatgpt_auth,omitempty"`
-	AuthPreferenceSet    bool     `json:"auth_preference_set,omitempty"`
+	AuthPreferenceSet   bool     `json:"auth_preference_set,omitempty"`
 }
 
 func normalizeBaseURL(raw string) (string, error) {
@@ -346,4 +346,3 @@ func removeYunqiaoCodexConfig(existing string) string {
 	}
 	return body + "\n"
 }
-

@@ -1,4 +1,4 @@
-name: Wails v1.6.0 release candidate
+name: Wails release candidate
 
 on:
   push:
@@ -30,7 +30,7 @@ jobs:
           npm audit --audit-level=moderate
           npm run build
       - name: Resolve Go dependencies
-        run: go mod tidy
+        run: go mod verify
       - name: Test Go code
         run: go test ./...
       - name: Install Wails CLI
@@ -48,7 +48,9 @@ jobs:
         run: |
           $exe = Resolve-Path build/bin/YunqiaoCodexBridge.exe
           $file = Get-Item $exe
-          if ($file.VersionInfo.ProductVersion -notlike '1.6.0*') { throw "Unexpected product version: $($file.VersionInfo.ProductVersion)" }
+          $appVersion = [regex]::Match((Get-Content config.go -Raw), 'appVersion\s*=\s*"([^"]+)"').Groups[1].Value
+          if (-not $appVersion) { throw "appVersion not found in config.go" }
+          if ($file.VersionInfo.ProductVersion -notlike "$appVersion*") { throw "Unexpected product version: $($file.VersionInfo.ProductVersion)" }
           $signature = Get-AuthenticodeSignature $exe
           Write-Host "Product: $($file.VersionInfo.ProductName) $($file.VersionInfo.ProductVersion)"
           Write-Host "Signature status: $($signature.Status)"
@@ -73,6 +75,6 @@ jobs:
           Get-FileHash candidate/YunqiaoCodexBridge.exe -Algorithm SHA256 | ForEach-Object { "$($_.Hash)  YunqiaoCodexBridge.exe" } | Set-Content candidate/SHA256SUMS.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: YunqiaoCodexBridge-v1.6.0-candidate
+          name: YunqiaoCodexBridge-${{ github.sha }}-candidate
           path: candidate/
           retention-days: 14

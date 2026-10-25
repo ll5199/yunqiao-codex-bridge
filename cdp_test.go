@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -89,5 +91,68 @@ func TestLocalizationOnlyExpressionDoesNotInjectModels(t *testing.T) {
 		if !strings.Contains(expression, expected) {
 			t.Fatalf("localization-only expression is missing %q", expected)
 		}
+	}
+}
+
+func TestImagesWithInlineDataEmbedsFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "a.png")
+	if err := os.WriteFile(path, []byte("png-bytes"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	delivered := imagesWithInlineData([]proxyImage{{ID: "a", MimeType: "image/png", FilePath: path}, {ID: "missing"}})
+	if delivered[0].DataURL != "data:image/png;base64,cG5nLWJ5dGVz" {
+		t.Fatalf("unexpected data url %q", delivered[0].DataURL)
+	}
+	if delivered[1].DataURL != "" {
+		t.Fatalf("missing file should not inline data")
+	}
+}
+
+func TestSaveImageToDownloadsKeepsExistingFiles(t *testing.T) {
+	store := newPersistentImageStore(t.TempDir(), nil)
+	png := "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+	if !store.add(png) {
+		t.Fatal("image not stored")
+	}
+	id := store.list()[0].ID
+	directory := t.TempDir()
+	first, err := saveImageToDownloads(store, id, directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := saveImageToDownloads(store, id, directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first == second || !strings.Contains(filepath.Base(second), "(1)") {
+		t.Fatalf("second save should get a new name: %s %s", first, second)
+	}
+	if _, err := saveImageToDownloads(store, "missing", directory); err == nil {
+		t.Fatal("missing image should fail")
+	}
+}
+
+func TestPendingImagesForRenderer(t *testing.T) {
+	images := []proxyImage{
+		{ID: "a", ConversationKey: "thread:a", CreatedAt: 1},
+		{ID: "b", ConversationKey: "thread:b", CreatedAt: 1},
+		{ID: "new", CreatedAt: 5000},
+		{ID: "old", CreatedAt: 1},
+	}
+	ids := func(list []proxyImage) string {
+		var names []string
+		for _, image := range list {
+			names = append(names, image.ID)
+		}
+		return strings.Join(names, ",")
+	}
+	if got := ids(pendingImagesForRenderer(images, &rendererImageState{Key: "thread:a", Visible: true}, 6000)); got != "a,new" {
+		t.Fatalf("visible thread a: %s", got)
+	}
+	if got := ids(pendingImagesForRenderer(images, &rendererImageState{Key: "thread:a", Visible: true, Have: []string{"a", "new"}}, 6000)); got != "" {
+		t.Fatalf("nothing missing: %s", got)
+	}
+	if got := ids(pendingImagesForRenderer(images, &rendererImageState{Key: "thread:b"}, 6000)); got != "b" {
+		t.Fatalf("hidden page must not claim new images: %s", got)
 	}
 }

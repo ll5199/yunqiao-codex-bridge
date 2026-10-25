@@ -15,6 +15,8 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -409,14 +411,30 @@ func localizeNativeMenu(port int) error {
 	return lastError
 }
 
+// rendererImageState is what the injected page reports on every sync tick.
+type rendererImageState struct {
+	Key          string   `json:"key"`
+	Visible      bool     `json:"visible"`
+	Have         []string `json:"have"`
+	Associations []struct {
+		IDs []string `json:"ids"`
+		Key string   `json:"key"`
+	} `json:"associations"`
+}
+
+const rendererImageStateExpression = "(() => typeof window.__yunqiaoImageState === 'function' ? window.__yunqiaoImageState() : null)()"
+
+// The page cannot reach the local proxy and loses its image list when Codex
+// reloads it, so the bridge asks each page which conversation is open and
+// which images it holds, and sends whatever that conversation is missing.
 func syncProxyImagesToCodex(port int, proxy *apiProxy) {
 	if proxy == nil {
 		return
 	}
 	ticker := time.NewTicker(750 * time.Millisecond)
 	defer ticker.Stop()
-	sent := make(map[string]map[string]bool)
 	deliveryErrors := make(map[string]int)
+	lastKeys := make(map[string]string)
 	for {
 		select {
 		case <-proxy.done:
@@ -424,8 +442,7 @@ func syncProxyImagesToCodex(port int, proxy *apiProxy) {
 		case <-ticker.C:
 		}
 
-		images := proxy.store.list()
-		if len(images) == 0 {
+		if len(proxy.store.list()) == 0 {
 			continue
 		}
 		client := &http.Client{Timeout: 1500 * time.Millisecond}
@@ -439,22 +456,29 @@ func syncProxyImagesToCodex(port int, proxy *apiProxy) {
 				strings.HasPrefix(target.URL, "devtools://") {
 				continue
 			}
-			targetSent := sent[target.ID]
-			if targetSent == nil {
-				targetSent = make(map[string]bool)
-				sent[target.ID] = targetSent
+			handleImageDownloadRequests(target.WebSocketDebuggerURL, proxy)
+			state, err := readRendererImageState(target.WebSocketDebuggerURL)
+			if err != nil || state == nil {
+				continue
 			}
-			pending := make([]proxyImage, 0, len(images))
-			for _, image := range images {
-				isNewUnassigned := image.ConversationKey == "" && image.CreatedAt >= proxy.startedAt-5000
-				if isNewUnassigned && !targetSent[image.ID] {
-					pending = append(pending, image)
+			if state.Key != lastKeys[target.ID] {
+				lastKeys[target.ID] = state.Key
+				if proxy.logger != nil {
+					proxy.logger("image.conversation", fmt.Sprintf("target=%s key=%s visible=%t have=%d", safeLogID(target.ID), safeLogID(state.Key), state.Visible, len(state.Have)))
 				}
 			}
+			// Only the window the user is looking at may claim new images,
+			// otherwise a background page could take them into its own thread.
+			if state.Visible {
+				for _, association := range state.Associations {
+					proxy.store.associate(association.IDs, association.Key)
+				}
+			}
+			pending := pendingImagesForRenderer(proxy.store.list(), state, proxy.startedAt)
 			if len(pending) == 0 {
 				continue
 			}
-			payload, err := json.Marshal(pending)
+			payload, err := json.Marshal(imagesWithInlineData(pending))
 			if err != nil {
 				continue
 			}
@@ -470,14 +494,186 @@ func syncProxyImagesToCodex(port int, proxy *apiProxy) {
 				continue
 			}
 			delete(deliveryErrors, target.ID)
-			for _, image := range pending {
-				targetSent[image.ID] = true
-			}
 			if proxy.logger != nil {
-				proxy.logger("image.delivered", fmt.Sprintf("target=%s count=%d", safeLogID(target.ID), len(pending)))
+				proxy.logger("image.delivered", fmt.Sprintf("target=%s count=%d key=%s", safeLogID(target.ID), len(pending), safeLogID(state.Key)))
 			}
 		}
 	}
+}
+
+func readRendererImageState(webSocketURL string) (*rendererImageState, error) {
+	value, err := evaluateTargetValue(webSocketURL, rendererImageStateExpression)
+	if err != nil || value == nil {
+		return nil, err
+	}
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return nil, err
+	}
+	var state rendererImageState
+	if err := json.Unmarshal(encoded, &state); err != nil {
+		return nil, err
+	}
+	return &state, nil
+}
+
+// pendingImagesForRenderer picks the images the page should hold but lacks:
+// those of its open conversation, plus new unclaimed ones for the visible page.
+func pendingImagesForRenderer(images []proxyImage, state *rendererImageState, startedAt int64) []proxyImage {
+	have := make(map[string]bool, len(state.Have))
+	for _, id := range state.Have {
+		have[id] = true
+	}
+	pending := make([]proxyImage, 0)
+	for _, image := range images {
+		if have[image.ID] {
+			continue
+		}
+		belongsHere := image.ConversationKey != "" && image.ConversationKey == state.Key
+		newUnclaimed := state.Visible && image.ConversationKey == "" && image.CreatedAt >= startedAt-5000
+		if belongsHere || newUnclaimed {
+			pending = append(pending, image)
+		}
+	}
+	// The page keeps at most 20 images; sending more would evict and resend forever.
+	if len(pending) > 20 {
+		pending = pending[len(pending)-20:]
+	}
+	return pending
+}
+
+// maxInlineImageBytes bounds the data: URL sent over DevTools per image.
+const maxInlineImageBytes = 16 << 20
+
+type deliveredImage struct {
+	proxyImage
+	DataURL string `json:"data_url,omitempty"`
+}
+
+// The Codex page may be unable to load http://127.0.0.1 resources (CSP or
+// private network rules), so the image bytes travel with the DevTools call.
+func imagesWithInlineData(images []proxyImage) []deliveredImage {
+	delivered := make([]deliveredImage, 0, len(images))
+	for _, image := range images {
+		item := deliveredImage{proxyImage: image}
+		if info, err := os.Stat(image.FilePath); err == nil && info.Size() <= maxInlineImageBytes {
+			if data, err := os.ReadFile(image.FilePath); err == nil {
+				mimeType := image.MimeType
+				if mimeType == "" {
+					mimeType = "image/png"
+				}
+				item.DataURL = "data:" + mimeType + ";base64," + base64.StdEncoding.EncodeToString(data)
+			}
+		}
+		delivered = append(delivered, item)
+	}
+	return delivered
+}
+
+// revealSavedFile shows a saved download to the user (Explorer on Windows).
+var revealSavedFile = func(string) {}
+
+// Codex suppresses downloads started by the page, so the page queues image
+// IDs and the bridge copies the stored originals into the Downloads folder.
+func handleImageDownloadRequests(webSocketURL string, proxy *apiProxy) {
+	value, err := evaluateTargetValue(webSocketURL,
+		"(() => typeof window.__yunqiaoTakeDownloadRequests === 'function' ? window.__yunqiaoTakeDownloadRequests() : [])()")
+	if err != nil {
+		return
+	}
+	requests, _ := value.([]any)
+	for _, raw := range requests {
+		id, _ := raw.(string)
+		if id == "" {
+			continue
+		}
+		path, err := saveImageToDownloads(proxy.store, id, imageDownloadDirectory())
+		result := map[string]any{"id": id, "ok": err == nil, "path": path}
+		if err != nil {
+			result["error"] = err.Error()
+		} else {
+			revealSavedFile(path)
+		}
+		if proxy.logger != nil {
+			proxy.logger("image.download", fmt.Sprintf("id=%s ok=%t", safeLogID(id), err == nil))
+		}
+		encoded, _ := json.Marshal(result)
+		_ = evaluateTarget(webSocketURL, "window.__yunqiaoDownloadResult?.("+string(encoded)+")")
+	}
+}
+
+func imageDownloadDirectory() string {
+	home := os.Getenv("USERPROFILE")
+	if home == "" {
+		home, _ = os.UserHomeDir()
+	}
+	return filepath.Join(home, "Downloads")
+}
+
+func saveImageToDownloads(store *imageStore, id, directory string) (string, error) {
+	var found *proxyImage
+	for _, image := range store.list() {
+		if image.ID == id {
+			image := image
+			found = &image
+			break
+		}
+	}
+	if found == nil || found.FilePath == "" {
+		return "", errors.New("找不到这张图片的原图")
+	}
+	data, err := os.ReadFile(found.FilePath)
+	if err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(directory, 0o755); err != nil {
+		return "", err
+	}
+	name := filepath.Base(found.FileName)
+	if name == "" || name == "." {
+		name = "yunqiao-" + id + ".png"
+	}
+	ext := filepath.Ext(name)
+	stem := strings.TrimSuffix(name, ext)
+	for index := 0; ; index++ {
+		candidate := filepath.Join(directory, name)
+		if index > 0 {
+			candidate = filepath.Join(directory, fmt.Sprintf("%s (%d)%s", stem, index, ext))
+		}
+		file, err := os.OpenFile(candidate, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+		if errors.Is(err, os.ErrExist) {
+			continue
+		}
+		if err != nil {
+			return "", err
+		}
+		_, writeErr := file.Write(data)
+		closeErr := file.Close()
+		if writeErr != nil {
+			return "", writeErr
+		}
+		return candidate, closeErr
+	}
+}
+
+func evaluateTargetValue(webSocketURL, expression string) (any, error) {
+	socket, err := dialWebSocket(webSocketURL)
+	if err != nil {
+		return nil, err
+	}
+	defer socket.Close()
+	result, err := socket.command("Runtime.evaluate", map[string]any{
+		"expression":    expression,
+		"returnByValue": true,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if exception, ok := result["exceptionDetails"]; ok && exception != nil {
+		return nil, errors.New("页面脚本异常")
+	}
+	remote, _ := result["result"].(map[string]any)
+	return remote["value"], nil
 }
 
 func evaluateTarget(webSocketURL, expression string) error {

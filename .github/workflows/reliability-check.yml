@@ -24,8 +24,9 @@ jobs:
       - name: Test and vet
         shell: pwsh
         run: |
-          go mod tidy
-          Get-ChildItem -Filter *.go | ForEach-Object { gofmt -w $_.FullName }
+          go mod verify
+          $unformatted = gofmt -l .
+          if ($unformatted) { Write-Error "gofmt needed: $unformatted"; exit 1 }
           go test ./...
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           go vet -unsafeptr=false ./...

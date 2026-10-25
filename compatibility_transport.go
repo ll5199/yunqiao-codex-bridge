@@ -27,39 +27,60 @@ func newCompatibilityTransport(base http.RoundTripper, logger func(string, strin
 }
 
 func (transport *compatibilityTransport) RoundTrip(request *http.Request) (*http.Response, error) {
- // Never replay a successful response: its stream may already contain output or tool calls.
- current:=request
- for attempt:=0; ; attempt++ {
-  response,err:=transport.roundTripOnce(current)
-  if err!=nil || response==nil || current.GetBody==nil { return response,err }
-  retryable:=response.StatusCode==http.StatusTooManyRequests || response.StatusCode==http.StatusServiceUnavailable
-  if response.StatusCode==http.StatusBadGateway { retryable=isOverloadResponse(response) }
-  if !retryable || attempt>=2 { return response,nil }
-  next,cloneErr:=cloneRequestWithBody(current)
-  if cloneErr!=nil { return response,nil }
-  if attempt==0 && current.Header.Get("X-Yunqiao-Smart-Route")=="1" && transport.fallbackModel!=nil {
-   model,effort:=transport.fallbackModel(current.Header.Get("X-Yunqiao-Model"))
-   if model!="" && model!=current.Header.Get("X-Yunqiao-Model") {
-    if fallback,e:=smartRouteFallbackRequest(current,model,effort); e==nil { next=fallback }
-   }
-  }
-  delay:=transport.retryDelay*time.Duration(1<<attempt)
-  if transport.logger!=nil { transport.logger("protocol.retry",fmt.Sprintf("attempt=%d status=%d delay=%s",attempt+1,response.StatusCode,delay)) }
-  _=response.Body.Close()
-  if err:=waitForCompatibilityRetry(current,delay); err!=nil { _=next.Body.Close(); return nil,err }
-  current=next
- }
+	// Never replay a successful response: its stream may already contain output or tool calls.
+	current := request
+	for attempt := 0; ; attempt++ {
+		response, err := transport.roundTripOnce(current)
+		if err != nil || response == nil || current.GetBody == nil {
+			return response, err
+		}
+		retryable := response.StatusCode == http.StatusTooManyRequests || response.StatusCode == http.StatusServiceUnavailable
+		if response.StatusCode == http.StatusBadGateway {
+			retryable = isOverloadResponse(response)
+		}
+		if !retryable || attempt >= 2 {
+			return response, nil
+		}
+		next, cloneErr := cloneRequestWithBody(current)
+		if cloneErr != nil {
+			return response, nil
+		}
+		if attempt == 0 && current.Header.Get("X-Yunqiao-Smart-Route") == "1" && transport.fallbackModel != nil {
+			model, effort := transport.fallbackModel(current.Header.Get("X-Yunqiao-Model"))
+			if model != "" && model != current.Header.Get("X-Yunqiao-Model") {
+				if fallback, e := smartRouteFallbackRequest(current, model, effort); e == nil {
+					next = fallback
+				}
+			}
+		}
+		delay := transport.retryDelay * time.Duration(1<<attempt)
+		if transport.logger != nil {
+			transport.logger("protocol.retry", fmt.Sprintf("attempt=%d status=%d delay=%s", attempt+1, response.StatusCode, delay))
+		}
+		_ = response.Body.Close()
+		if err := waitForCompatibilityRetry(current, delay); err != nil {
+			_ = next.Body.Close()
+			return nil, err
+		}
+		current = next
+	}
 }
 
 func isOverloadResponse(response *http.Response) bool {
- prefix,err:=io.ReadAll(io.LimitReader(response.Body,64<<10))
- // Preserve the entire response, including any bytes beyond the inspected prefix.
- response.Body=&prefixedResponseBody{Reader:io.MultiReader(bytes.NewReader(prefix),response.Body),Closer:response.Body}
- if err!=nil { return false }
- lower:=strings.ToLower(string(prefix))
- return strings.Contains(lower,"concurrency limit") || strings.Contains(lower,"overloaded") || strings.Contains(lower,"concurrency slot")
+	prefix, err := io.ReadAll(io.LimitReader(response.Body, 64<<10))
+	// Preserve the entire response, including any bytes beyond the inspected prefix.
+	response.Body = &prefixedResponseBody{Reader: io.MultiReader(bytes.NewReader(prefix), response.Body), Closer: response.Body}
+	if err != nil {
+		return false
+	}
+	lower := strings.ToLower(string(prefix))
+	return strings.Contains(lower, "concurrency limit") || strings.Contains(lower, "overloaded") || strings.Contains(lower, "concurrency slot")
 }
-type prefixedResponseBody struct { io.Reader; io.Closer }
+
+type prefixedResponseBody struct {
+	io.Reader
+	io.Closer
+}
 
 func isGrokConcurrencyLimit(response *http.Response) bool {
 	body, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))

@@ -836,3 +836,32 @@ func TestGrokConcurrencyErrorIsExplained(t *testing.T) {
 		t.Fatalf("unexpected Grok concurrency explanation: %s", message)
 	}
 }
+
+func TestLocalAccessGuard(t *testing.T) {
+	handler := localAccessGuard(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.WriteHeader(http.StatusNoContent)
+	}), nil)
+	cases := []struct {
+		host, origin string
+		want         int
+	}{
+		{"127.0.0.1:9230", "", http.StatusNoContent},
+		{"localhost:9230", "app://-", http.StatusNoContent},
+		{"127.0.0.1:9230", "http://127.0.0.1:5173", http.StatusNoContent},
+		{"127.0.0.1:9230", "null", http.StatusNoContent},
+		{"127.0.0.1:9230", "https://evil.example", http.StatusForbidden},
+		{"evil.example:9230", "", http.StatusForbidden},
+	}
+	for _, testCase := range cases {
+		request := httptest.NewRequest(http.MethodPost, "http://"+testCase.host+"/v1/responses", nil)
+		request.Host = testCase.host
+		if testCase.origin != "" {
+			request.Header.Set("Origin", testCase.origin)
+		}
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, request)
+		if recorder.Code != testCase.want {
+			t.Errorf("host=%s origin=%s: got %d, want %d", testCase.host, testCase.origin, recorder.Code, testCase.want)
+		}
+	}
+}

@@ -589,8 +589,14 @@
   }
 
   async function associateImages(images, conversationKey) {
+    if (!conversationKey) return;
+    const reportIDs = images.map((image) => image.id).filter(Boolean);
+    if (reportIDs.length) pendingImageAssociations.push({ ids: reportIDs, key: conversationKey });
+    // Record the owner locally first: the page may be unable to reach the
+    // local proxy, and the card must still follow its conversation.
+    for (const image of images) image.conversationKey = conversationKey;
     const imageIDs = images.map((image) => image.id).filter(Boolean);
-    if (!conversationKey || !imageIDs.length) return;
+    if (!imageIDs.length) return;
     try {
       await fetch("http://127.0.0.1:9230/yunqiao/associate", {
         method: "POST",
@@ -614,12 +620,24 @@
       id: metadata.id || "",
       source,
       downloadURL: metadata.download_url || metadata.downloadURL || source,
+      dataURL: metadata.data_url || metadata.dataURL || "",
       fileName: metadata.file_name || metadata.fileName || "yunqiao-image.png",
       conversationKey: metadata.conversation_key || metadata.conversationKey || "",
       createdAt: Number(metadata.created_at || metadata.createdAt || Date.now()),
     });
-    if (capturedImages.length > 20) capturedImages.splice(0, capturedImages.length - 20);
+    if (capturedImages.length > 20) {
+      for (const evicted of capturedImages.splice(0, capturedImages.length - 20)) capturedImageKeys.delete(evicted.key);
+    }
   }
+
+  // Polled by the bridge over DevTools: the page cannot reach the proxy.
+  const pendingImageAssociations = [];
+  window.__yunqiaoImageState = () => ({
+    key: currentConversationKey(),
+    visible: document.visibilityState === "visible",
+    have: capturedImages.map((image) => image.id).filter(Boolean),
+    associations: pendingImageAssociations.splice(0),
+  });
 
   window.__yunqiaoAcceptProxyImages = (images) => {
     const activeKey = currentConversationKey();
@@ -661,6 +679,21 @@
 
     const prose = visibleConversationNodes(".prose");
     if (prose.length) return { mode: "append", target: prose.at(-1) };
+
+    // Newer Codex builds have no role/testid markers; anchor on the action
+    // row (copy / more buttons) under the latest assistant reply instead.
+    const copyButtons = visibleConversationNodes(
+      "button[aria-label*='Copy' i], button[aria-label*='复制'], button[title*='Copy' i], button[title*='复制']"
+    ).filter((button) => !button.closest("form, .composer-footer, [data-testid*='composer']"));
+    let actionRow = copyButtons.at(-1)?.parentElement;
+    // The action row often sits in a hover-revealed wrapper (opacity 0 until
+    // hovered); insert above the outermost such wrapper so the card stays visible.
+    for (let node = actionRow; node && node !== document.body && !node.matches?.("main"); node = node.parentElement) {
+      const style = getComputedStyle(node);
+      if (/(^|\s)(opacity-0|invisible)(\s|$)|group-hover|hover:opacity/.test(String(node.className || "")) ||
+          style.opacity === "0" || style.visibility === "hidden") actionRow = node;
+    }
+    if (actionRow?.parentElement) return { mode: "before", target: actionRow };
 
     const conversationRoot = document.querySelector("main") ||
       document.querySelector("[data-testid*='conversation'], [data-testid*='thread']") ||
@@ -706,6 +739,52 @@
     setTimeout(() => composer?.focus?.(), 250);
   }
 
+  // Codex's CSP may refuse <img> loads from the local proxy while still
+  // allowing fetch, so local images are shown through a blob: URL.
+  const capturedImageBlobURLs = new Map();
+  function setCapturedImageSource(element, source) {
+    if (!/^http:\/\/127\.0\.0\.1:9230\//.test(source || "")) {
+      element.src = source;
+      return;
+    }
+    const cached = capturedImageBlobURLs.get(source);
+    if (cached) {
+      element.src = cached;
+      return;
+    }
+    fetch(source, { credentials: "omit" })
+      .then((response) => {
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        return response.blob();
+      })
+      .then((blob) => {
+        const objectURL = URL.createObjectURL(blob);
+        capturedImageBlobURLs.set(source, objectURL);
+        element.src = objectURL;
+      })
+      .catch(() => {
+        element.src = source;
+      });
+  }
+
+  const imageDownloadRequests = [];
+  const imageDownloadCallbacks = new Map();
+  window.__yunqiaoTakeDownloadRequests = () => imageDownloadRequests.splice(0);
+  window.__yunqiaoDownloadResult = (result) => {
+    const callback = imageDownloadCallbacks.get(result?.id);
+    imageDownloadCallbacks.delete(result?.id);
+    callback?.(result);
+  };
+
+  function dataURLToBlob(dataURL) {
+    const [header, payload = ""] = dataURL.split(",", 2);
+    const mimeType = /^data:([^;,]+)/.exec(header)?.[1] || "image/png";
+    const binary = atob(payload);
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index++) bytes[index] = binary.charCodeAt(index);
+    return new Blob([bytes], { type: mimeType });
+  }
+
   function renderCapturedImages() {
     const activeKey = currentConversationKey();
     if (!capturedImages.length) return;
@@ -718,8 +797,19 @@
     for (const image of capturedImages) {
       if (image.conversationKey && image.conversationKey !== activeKey) continue;
       const renderKey = image.key.slice(-80);
-      if (renderedImageKeys.has(renderKey) ||
-          document.querySelector(`[data-yunqiao-image-key="${CSS.escape(renderKey)}"]`)) continue;
+      // Codex re-renders the thread on navigation and drops injected cards,
+      // so only an attached card counts as rendered. The reply's action row
+      // can appear after the image arrives, so an existing card follows it.
+      const existing = document.querySelector(`[data-yunqiao-image-key="${CSS.escape(renderKey)}"]`);
+      if (existing) {
+        if (mount.mode === "before" && mount.target !== existing &&
+            existing.nextElementSibling !== mount.target && !mount.target.contains(existing)) {
+          mount.target.parentElement?.insertBefore(existing, mount.target);
+        } else if (mount.mode === "append" && existing.parentElement !== mount.target) {
+          mount.target.appendChild(existing);
+        }
+        continue;
+      }
       const card = document.createElement("div");
       card.dataset.yunqiaoImageKey = renderKey;
       card.style.cssText = "box-sizing:border-box;width:min(100%,760px);margin:12px 0;padding:10px;border:1px solid rgba(127,127,127,.35);border-radius:10px;background:rgba(127,127,127,.06)";
@@ -735,7 +825,8 @@
       header.append(title, collapseButton);
       const body = document.createElement("div");
       const element = document.createElement("img");
-      element.src = image.source;
+      if (image.dataURL) element.src = image.dataURL;
+      else setCapturedImageSource(element, image.source);
       element.alt = "生成的图片";
       element.loading = "eager";
       element.style.cssText = "display:block;width:auto;max-width:100%;max-height:480px;border-radius:8px;object-fit:contain";
@@ -745,14 +836,38 @@
       downloadButton.type = "button";
       downloadButton.textContent = "下载原图";
       downloadButton.style.cssText = "border:0;padding:0;background:transparent;color:inherit;cursor:pointer;font-size:12px;text-decoration:underline";
-      downloadButton.addEventListener("click", async () => {
-        const originalText = downloadButton.textContent;
+      let downloadResetTimer = 0;
+      const saveImage = async () => {
+        clearTimeout(downloadResetTimer);
+        const originalText = "下载原图";
         downloadButton.disabled = true;
+        // Codex drops page-initiated downloads; the bridge saves the original
+        // into the Downloads folder and reports back through DevTools.
+        if (image.id) {
+          downloadButton.textContent = "正在保存…";
+          imageDownloadRequests.push(image.id);
+          imageDownloadCallbacks.set(image.id, (result) => {
+            downloadButton.textContent = result.ok
+              ? `已保存到“下载”：${String(result.path || "").split(/[\\/]/).pop()}`
+              : "保存失败，请重试";
+            downloadResetTimer = setTimeout(() => {
+              downloadButton.disabled = false;
+              downloadButton.textContent = originalText;
+            }, 4000);
+          });
+          return;
+        }
         downloadButton.textContent = "正在下载…";
         try {
-          const response = await fetch(image.downloadURL || image.source, { cache: "no-store", credentials: "omit" });
-          if (!response.ok) throw new Error(`HTTP ${response.status}`);
-          const blob = await response.blob();
+          // Codex's CSP blocks fetch() of data: URLs, so decode inline data here.
+          let blob;
+          if (image.dataURL) {
+            blob = dataURLToBlob(image.dataURL);
+          } else {
+            const response = await fetch(image.downloadURL || image.source, { cache: "no-store", credentials: "omit" });
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            blob = await response.blob();
+          }
           const objectURL = URL.createObjectURL(blob);
           const anchor = document.createElement("a");
           anchor.href = objectURL;
@@ -766,11 +881,20 @@
         } catch {
           downloadButton.textContent = "下载失败，请重试";
         } finally {
-          setTimeout(() => {
+          downloadResetTimer = setTimeout(() => {
             downloadButton.disabled = false;
             downloadButton.textContent = originalText;
           }, 1800);
         }
+      };
+      downloadButton.addEventListener("click", saveImage);
+      // Electron's native image context menu crashes Codex's main process
+      // ("getOwnerBrowserWindow" of null), so right-click saves directly.
+      element.title = "右键保存图片";
+      element.addEventListener("contextmenu", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        void saveImage();
       });
       const continueButton = document.createElement("button");
       continueButton.type = "button";

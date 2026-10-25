@@ -28,7 +28,7 @@ jobs:
       - name: Windows lifecycle regression tests
         shell: pwsh
         run: |
-          go mod tidy
+          go mod verify
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           gofmt -w launch_windows.go lifecycle_windows_test.go
           go test -count=1 ./...
