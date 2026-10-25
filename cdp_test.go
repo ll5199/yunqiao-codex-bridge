@@ -131,3 +131,28 @@ func TestSaveImageToDownloadsKeepsExistingFiles(t *testing.T) {
 		t.Fatal("missing image should fail")
 	}
 }
+
+func TestPendingImagesForRenderer(t *testing.T) {
+	images := []proxyImage{
+		{ID: "a", ConversationKey: "thread:a", CreatedAt: 1},
+		{ID: "b", ConversationKey: "thread:b", CreatedAt: 1},
+		{ID: "new", CreatedAt: 5000},
+		{ID: "old", CreatedAt: 1},
+	}
+	ids := func(list []proxyImage) string {
+		var names []string
+		for _, image := range list {
+			names = append(names, image.ID)
+		}
+		return strings.Join(names, ",")
+	}
+	if got := ids(pendingImagesForRenderer(images, &rendererImageState{Key: "thread:a", Visible: true}, 6000)); got != "a,new" {
+		t.Fatalf("visible thread a: %s", got)
+	}
+	if got := ids(pendingImagesForRenderer(images, &rendererImageState{Key: "thread:a", Visible: true, Have: []string{"a", "new"}}, 6000)); got != "" {
+		t.Fatalf("nothing missing: %s", got)
+	}
+	if got := ids(pendingImagesForRenderer(images, &rendererImageState{Key: "thread:b"}, 6000)); got != "b" {
+		t.Fatalf("hidden page must not claim new images: %s", got)
+	}
+}

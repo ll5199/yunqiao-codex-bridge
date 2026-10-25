@@ -411,14 +411,30 @@ func localizeNativeMenu(port int) error {
 	return lastError
 }
 
+// rendererImageState is what the injected page reports on every sync tick.
+type rendererImageState struct {
+	Key          string   `json:"key"`
+	Visible      bool     `json:"visible"`
+	Have         []string `json:"have"`
+	Associations []struct {
+		IDs []string `json:"ids"`
+		Key string   `json:"key"`
+	} `json:"associations"`
+}
+
+const rendererImageStateExpression = "(() => typeof window.__yunqiaoImageState === 'function' ? window.__yunqiaoImageState() : null)()"
+
+// The page cannot reach the local proxy and loses its image list when Codex
+// reloads it, so the bridge asks each page which conversation is open and
+// which images it holds, and sends whatever that conversation is missing.
 func syncProxyImagesToCodex(port int, proxy *apiProxy) {
 	if proxy == nil {
 		return
 	}
 	ticker := time.NewTicker(750 * time.Millisecond)
 	defer ticker.Stop()
-	sent := make(map[string]map[string]bool)
 	deliveryErrors := make(map[string]int)
+	lastKeys := make(map[string]string)
 	for {
 		select {
 		case <-proxy.done:
@@ -426,8 +442,7 @@ func syncProxyImagesToCodex(port int, proxy *apiProxy) {
 		case <-ticker.C:
 		}
 
-		images := proxy.store.list()
-		if len(images) == 0 {
+		if len(proxy.store.list()) == 0 {
 			continue
 		}
 		client := &http.Client{Timeout: 1500 * time.Millisecond}
@@ -442,18 +457,24 @@ func syncProxyImagesToCodex(port int, proxy *apiProxy) {
 				continue
 			}
 			handleImageDownloadRequests(target.WebSocketDebuggerURL, proxy)
-			targetSent := sent[target.ID]
-			if targetSent == nil {
-				targetSent = make(map[string]bool)
-				sent[target.ID] = targetSent
+			state, err := readRendererImageState(target.WebSocketDebuggerURL)
+			if err != nil || state == nil {
+				continue
 			}
-			pending := make([]proxyImage, 0, len(images))
-			for _, image := range images {
-				isNewUnassigned := image.ConversationKey == "" && image.CreatedAt >= proxy.startedAt-5000
-				if isNewUnassigned && !targetSent[image.ID] {
-					pending = append(pending, image)
+			if state.Key != lastKeys[target.ID] {
+				lastKeys[target.ID] = state.Key
+				if proxy.logger != nil {
+					proxy.logger("image.conversation", fmt.Sprintf("target=%s key=%s visible=%t have=%d", safeLogID(target.ID), safeLogID(state.Key), state.Visible, len(state.Have)))
 				}
 			}
+			// Only the window the user is looking at may claim new images,
+			// otherwise a background page could take them into its own thread.
+			if state.Visible {
+				for _, association := range state.Associations {
+					proxy.store.associate(association.IDs, association.Key)
+				}
+			}
+			pending := pendingImagesForRenderer(proxy.store.list(), state, proxy.startedAt)
 			if len(pending) == 0 {
 				continue
 			}
@@ -473,14 +494,52 @@ func syncProxyImagesToCodex(port int, proxy *apiProxy) {
 				continue
 			}
 			delete(deliveryErrors, target.ID)
-			for _, image := range pending {
-				targetSent[image.ID] = true
-			}
 			if proxy.logger != nil {
-				proxy.logger("image.delivered", fmt.Sprintf("target=%s count=%d", safeLogID(target.ID), len(pending)))
+				proxy.logger("image.delivered", fmt.Sprintf("target=%s count=%d key=%s", safeLogID(target.ID), len(pending), safeLogID(state.Key)))
 			}
 		}
 	}
+}
+
+func readRendererImageState(webSocketURL string) (*rendererImageState, error) {
+	value, err := evaluateTargetValue(webSocketURL, rendererImageStateExpression)
+	if err != nil || value == nil {
+		return nil, err
+	}
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return nil, err
+	}
+	var state rendererImageState
+	if err := json.Unmarshal(encoded, &state); err != nil {
+		return nil, err
+	}
+	return &state, nil
+}
+
+// pendingImagesForRenderer picks the images the page should hold but lacks:
+// those of its open conversation, plus new unclaimed ones for the visible page.
+func pendingImagesForRenderer(images []proxyImage, state *rendererImageState, startedAt int64) []proxyImage {
+	have := make(map[string]bool, len(state.Have))
+	for _, id := range state.Have {
+		have[id] = true
+	}
+	pending := make([]proxyImage, 0)
+	for _, image := range images {
+		if have[image.ID] {
+			continue
+		}
+		belongsHere := image.ConversationKey != "" && image.ConversationKey == state.Key
+		newUnclaimed := state.Visible && image.ConversationKey == "" && image.CreatedAt >= startedAt-5000
+		if belongsHere || newUnclaimed {
+			pending = append(pending, image)
+		}
+	}
+	// The page keeps at most 20 images; sending more would evict and resend forever.
+	if len(pending) > 20 {
+		pending = pending[len(pending)-20:]
+	}
+	return pending
 }
 
 // maxInlineImageBytes bounds the data: URL sent over DevTools per image.

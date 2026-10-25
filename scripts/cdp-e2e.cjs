@@ -20,6 +20,21 @@ const port = 9333;
   try {
     await page.waitForSelector('[data-yunqiao-image-key] img', { timeout: 60000 });
     console.log('PASS image delivered over DevTools and shown');
+    const shown = () => page.evaluate(() => { const c = document.querySelector('[data-yunqiao-image-key]');
+      return !!c && !c.hidden && !!c.querySelector('img')?.naturalWidth; });
+    await page.click('[data-app-action-sidebar-thread-id="b"]'); await page.waitForTimeout(2500);
+    if (await shown()) throw new Error('image shown in another thread');
+    await page.click('[data-app-action-sidebar-thread-id="a"]'); await page.waitForTimeout(2500);
+    if (!(await shown())) throw new Error('image missing after switching back');
+    console.log('PASS image hidden in thread b and back in thread a');
+    // A reload wipes the page's memory; the bridge must resend the thread's image.
+    await page.reload(); await page.addScriptTag({ content: fs.readFileSync(path.join(root, 'inject.js'), 'utf8') });
+    await page.waitForSelector('[data-yunqiao-image-key] img', { timeout: 15000 });
+    console.log('PASS image restored after the page reloaded');
+    await page.click('[data-app-action-sidebar-thread-id="b"]'); await page.waitForTimeout(2500);
+    await page.click('[data-app-action-sidebar-thread-id="a"]'); await page.waitForTimeout(2500);
+    if (!(await shown())) throw new Error('image missing after reload and switching back');
+    console.log('PASS image survives reload plus thread switches');
     await page.mouse.move(0, 0);
     await page.click('text=下载原图');
     await page.waitForSelector('text=/已保存到“下载”/', { timeout: 30000 });

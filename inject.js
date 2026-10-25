@@ -590,6 +590,8 @@
 
   async function associateImages(images, conversationKey) {
     if (!conversationKey) return;
+    const reportIDs = images.map((image) => image.id).filter(Boolean);
+    if (reportIDs.length) pendingImageAssociations.push({ ids: reportIDs, key: conversationKey });
     // Record the owner locally first: the page may be unable to reach the
     // local proxy, and the card must still follow its conversation.
     for (const image of images) image.conversationKey = conversationKey;
@@ -623,8 +625,19 @@
       conversationKey: metadata.conversation_key || metadata.conversationKey || "",
       createdAt: Number(metadata.created_at || metadata.createdAt || Date.now()),
     });
-    if (capturedImages.length > 20) capturedImages.splice(0, capturedImages.length - 20);
+    if (capturedImages.length > 20) {
+      for (const evicted of capturedImages.splice(0, capturedImages.length - 20)) capturedImageKeys.delete(evicted.key);
+    }
   }
+
+  // Polled by the bridge over DevTools: the page cannot reach the proxy.
+  const pendingImageAssociations = [];
+  window.__yunqiaoImageState = () => ({
+    key: currentConversationKey(),
+    visible: document.visibilityState === "visible",
+    have: capturedImages.map((image) => image.id).filter(Boolean),
+    associations: pendingImageAssociations.splice(0),
+  });
 
   window.__yunqiaoAcceptProxyImages = (images) => {
     const activeKey = currentConversationKey();
