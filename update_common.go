@@ -11,12 +11,36 @@ import (
 
 const maxBridgeUpdateBytes int64 = 100 << 20
 
-// builtinUpdateManifestURLs are the entry points compiled into the client.
-// Everything else (where the installer lives, a new manifest location) is
-// read from latest.json, so moving servers only needs a manifest edit.
+// updateConfigURL is the one address compiled into the client. The file lists
+// the update manifests to check, so the update server can be changed by
+// editing it, like routing-policy.json.
+const updateConfigURL = "https://index.velyn65.com/download/update-config.json"
+
+// builtinUpdateManifestURLs are used when update-config.json is unreachable.
 var builtinUpdateManifestURLs = []string{
-	"https://bika223.26.59.139.yunqiao.xyz/yunqiao-update/latest.json",
 	"https://index.velyn65.com/download/latest.json",
+}
+
+type updateConfig struct {
+	ManifestURLs []string `json:"manifest_urls"`
+}
+
+// parseUpdateConfig returns the https manifest URLs listed in update-config.json.
+func parseUpdateConfig(body []byte) ([]string, error) {
+	var config updateConfig
+	if err := json.Unmarshal(body, &config); err != nil {
+		return nil, errors.New("更新配置格式无效")
+	}
+	urls := make([]string, 0, len(config.ManifestURLs))
+	for _, raw := range config.ManifestURLs {
+		if raw = strings.TrimSpace(raw); isHTTPSURL(raw) {
+			urls = append(urls, raw)
+		}
+	}
+	if len(urls) == 0 {
+		return nil, errors.New("更新配置没有可用的清单地址")
+	}
+	return urls, nil
 }
 
 type bridgeUpdateManifest struct {
@@ -80,12 +104,14 @@ func isHTTPSURL(raw string) bool {
 	return err == nil && parsed.Scheme == "https" && parsed.Host != ""
 }
 
-// updateManifestSources lists where to look: the remembered source first,
-// then the built-in entry points, without duplicates.
-func updateManifestSources(remembered string) []string {
-	sources := make([]string, 0, len(builtinUpdateManifestURLs)+1)
+// updateManifestSources lists where to look: the manifests named by
+// update-config.json, then the remembered source, then the built-in fallback,
+// without duplicates.
+func updateManifestSources(configured []string, remembered string) []string {
+	candidates := append(append(append([]string{}, configured...), strings.TrimSpace(remembered)), builtinUpdateManifestURLs...)
+	sources := make([]string, 0, len(candidates))
 	seen := make(map[string]bool)
-	for _, source := range append([]string{strings.TrimSpace(remembered)}, builtinUpdateManifestURLs...) {
+	for _, source := range candidates {
 		if source != "" && isHTTPSURL(source) && !seen[source] {
 			seen[source] = true
 			sources = append(sources, source)

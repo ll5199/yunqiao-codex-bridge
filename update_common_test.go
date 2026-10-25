@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -96,12 +97,25 @@ func TestParseBridgeUpdateManifestRejectsPlainHTTP(t *testing.T) {
 	}
 }
 
-func TestUpdateManifestSourcesPutsRememberedFirst(t *testing.T) {
-	sources := updateManifestSources("https://remembered/latest.json")
-	if sources[0] != "https://remembered/latest.json" || len(sources) != len(builtinUpdateManifestURLs)+1 {
+func TestUpdateManifestSourcesOrder(t *testing.T) {
+	sources := updateManifestSources([]string{"https://configured/latest.json"}, "https://remembered/latest.json")
+	want := append([]string{"https://configured/latest.json", "https://remembered/latest.json"}, builtinUpdateManifestURLs...)
+	if strings.Join(sources, ",") != strings.Join(want, ",") {
 		t.Fatalf("unexpected sources %v", sources)
 	}
-	if got := updateManifestSources(builtinUpdateManifestURLs[1]); len(got) != len(builtinUpdateManifestURLs) {
+	if got := updateManifestSources(builtinUpdateManifestURLs, builtinUpdateManifestURLs[0]); len(got) != len(builtinUpdateManifestURLs) {
 		t.Fatalf("duplicates not removed: %v", got)
+	}
+}
+
+func TestParseUpdateConfig(t *testing.T) {
+	urls, err := parseUpdateConfig([]byte(`{"manifest_urls":["https://a/latest.json"," http://insecure/latest.json ","https://b/latest.json"]}`))
+	if err != nil || strings.Join(urls, ",") != "https://a/latest.json,https://b/latest.json" {
+		t.Fatalf("got %v %v", urls, err)
+	}
+	for _, body := range []string{`{}`, `{"manifest_urls":["http://x/latest.json"]}`, `not json`} {
+		if _, err := parseUpdateConfig([]byte(body)); err == nil {
+			t.Fatalf("expected %s to fail", body)
+		}
 	}
 }
