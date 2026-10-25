@@ -18,11 +18,9 @@ import (
 	"time"
 )
 
-const (
-	bridgeManifestURL = "https://index.velyn65.com/download/latest.json"
-)
-
-var bridgeUpdateAllowedHosts = []string{"index.velyn65.com"}
+// The installer may live on any https host named by latest.json; it is only
+// installed when its SHA-256 matches the manifest.
+var bridgeUpdateAllowedHosts []string
 
 func startBridgeUpdate() {
 	setBusy(true, "正在检查 Bridge 更新…")
@@ -76,46 +74,81 @@ func startBridgeUpdate() {
 }
 
 func fetchBridgeUpdateManifest() (bridgeUpdateManifest, error) {
-	var lastErr error
+	sources := updateManifestSources(readRememberedUpdateSource())
+	var manifest bridgeUpdateManifest
+	var source string
+	var err error
 	for attempt := 1; attempt <= 3; attempt++ {
 		if attempt > 1 {
 			time.Sleep(time.Duration(attempt-1) * time.Second)
 		}
-		manifest, err := fetchBridgeUpdateManifestOnce()
+		manifest, source, err = resolveUpdateManifest(sources, fetchUpdateManifestBody)
 		if err == nil {
-			return manifest, nil
+			break
 		}
-		lastErr = err
 	}
-	return bridgeUpdateManifest{}, fmt.Errorf("连续 3 次连接更新服务失败：%w", lastErr)
+	if err != nil {
+		return bridgeUpdateManifest{}, fmt.Errorf("连续 3 次连接更新服务失败：%w", err)
+	}
+	rememberUpdateSource(source)
+	diagnosticLog("update.manifest", fmt.Sprintf("source=%s version=%s", source, manifest.Version))
+	return manifest, nil
 }
 
-func fetchBridgeUpdateManifestOnce() (bridgeUpdateManifest, error) {
-	request, err := http.NewRequest(http.MethodGet, bridgeManifestURL, nil)
+func updateSourceCachePath() string {
+	return filepath.Join(applicationDirectory(), "update-source.txt")
+}
+
+func readRememberedUpdateSource() string {
+	data, err := os.ReadFile(updateSourceCachePath())
 	if err != nil {
-		return bridgeUpdateManifest{}, err
+		return ""
+	}
+	return strings.TrimSpace(string(data))
+}
+
+func rememberUpdateSource(source string) {
+	if source == "" || source == readRememberedUpdateSource() {
+		return
+	}
+	_ = os.MkdirAll(applicationDirectory(), 0700)
+	_ = os.WriteFile(updateSourceCachePath(), []byte(source+"\n"), 0600)
+}
+
+func fetchUpdateManifestBody(manifestURL string) ([]byte, error) {
+	request, err := http.NewRequest(http.MethodGet, manifestURL, nil)
+	if err != nil {
+		return nil, err
 	}
 	request.Header.Set("Accept", "application/json")
 	request.Header.Set("User-Agent", "YunqiaoCodexBridge/"+appVersion)
-	client := &http.Client{Timeout: 45 * time.Second}
+	client := &http.Client{
+		Timeout: 20 * time.Second,
+		CheckRedirect: func(next *http.Request, via []*http.Request) error {
+			if len(via) >= 5 || next.URL.Scheme != "https" {
+				return errors.New("更新清单重定向不安全")
+			}
+			return nil
+		},
+	}
 	response, err := client.Do(request)
 	if err != nil {
-		return bridgeUpdateManifest{}, fmt.Errorf("连接云桥更新服务失败：%w", err)
+		return nil, fmt.Errorf("连接云桥更新服务失败：%w", err)
 	}
 	defer response.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(response.Body, 2<<20))
 	if err != nil {
-		return bridgeUpdateManifest{}, err
+		return nil, err
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return bridgeUpdateManifest{}, fmt.Errorf("云桥更新服务返回 HTTP %d", response.StatusCode)
+		return nil, fmt.Errorf("云桥更新服务返回 HTTP %d", response.StatusCode)
 	}
-	return parseBridgeUpdateManifest(body)
+	return body, nil
 }
 
 func downloadBridgeUpdate(manifest bridgeUpdateManifest, progress func(int)) (string, error) {
 	parsed, err := url.Parse(manifest.DownloadURL)
-	if err != nil || parsed.Scheme != "https" || !hostAllowed(parsed.Hostname(), bridgeUpdateAllowedHosts) {
+	if err != nil || parsed.Scheme != "https" || parsed.Host == "" {
 		return "", errors.New("更新清单中的下载地址不安全")
 	}
 	updates := filepath.Join(applicationDirectory(), "updates")
@@ -224,7 +257,7 @@ func downloadReleaseAssetBytes(rawURL string, limit int64, allowedHosts []string
 
 func openReleaseAsset(rawURL string, allowedHosts []string) (*http.Response, error) {
 	parsed, err := url.Parse(rawURL)
-	if err != nil || parsed.Scheme != "https" || !hostAllowed(parsed.Hostname(), allowedHosts) {
+	if err != nil || parsed.Scheme != "https" || !downloadHostAllowed(parsed.Hostname(), allowedHosts) {
 		return nil, errors.New("Release 下载地址不安全")
 	}
 	request, err := http.NewRequest(http.MethodGet, rawURL, nil)
@@ -235,7 +268,7 @@ func openReleaseAsset(rawURL string, allowedHosts []string) (*http.Response, err
 	client := &http.Client{
 		Timeout: 5 * time.Minute,
 		CheckRedirect: func(next *http.Request, via []*http.Request) error {
-			if len(via) >= 5 || next.URL.Scheme != "https" || !hostAllowed(next.URL.Hostname(), allowedHosts) {
+			if len(via) >= 5 || next.URL.Scheme != "https" || !downloadHostAllowed(next.URL.Hostname(), allowedHosts) {
 				return errors.New("Release 下载重定向不安全")
 			}
 			return nil
@@ -291,4 +324,13 @@ func scheduleBridgeReplacement(staged, version string) error {
 		return fmt.Errorf("启动 Bridge 更新程序失败：%w", err)
 	}
 	return nil
+}
+
+// A nil allow-list accepts any https host (the bridge update is pinned by
+// SHA-256 instead); a non-nil one restricts hosts as before.
+func downloadHostAllowed(host string, allowedHosts []string) bool {
+	if allowedHosts == nil {
+		return host != ""
+	}
+	return hostAllowed(host, allowedHosts)
 }
