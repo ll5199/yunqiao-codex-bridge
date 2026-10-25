@@ -64,7 +64,7 @@ func runUpdateHelperIfRequested() bool {
 		_ = restartBridge(current, log)
 		return true
 	}
-	if err := replaceWindowsFile(newPath, current); err != nil {
+	if err := installStagedFile(newPath, current, log); err != nil {
 		log("replace failed: %v", err)
 		restartBridge(current, log)
 		return true
@@ -92,6 +92,44 @@ func runUpdateHelperIfRequested() bool {
 		}
 	}
 	return true
+}
+
+// installStagedFile moves newPath over current. An exe that is still mapped
+// by a running process (a second window, a slow exit) cannot be overwritten,
+// but it can be renamed, so after retrying the old file is moved aside.
+func installStagedFile(newPath, current string, log func(string, ...any)) error {
+	var err error
+	for deadline := time.Now().Add(20 * time.Second); ; time.Sleep(500 * time.Millisecond) {
+		if err = replaceWindowsFile(newPath, current); err == nil {
+			return nil
+		}
+		if !time.Now().Before(deadline) {
+			break
+		}
+	}
+	aside := fmt.Sprintf("%s.old-%d", current, time.Now().Unix())
+	if renameErr := replaceWindowsFile(current, aside); renameErr != nil {
+		return fmt.Errorf("%v; moving the old file aside also failed: %v", err, renameErr)
+	}
+	if moveErr := replaceWindowsFile(newPath, current); moveErr != nil {
+		_ = replaceWindowsFile(aside, current)
+		return moveErr
+	}
+	log("replaced an in-use file; previous version moved to %s", aside)
+	return nil
+}
+
+// cleanupUpdateLeftovers removes files a previous update left next to the
+// executable: moved-aside old versions and unapplied .new copies.
+func cleanupUpdateLeftovers() {
+	current, err := os.Executable()
+	if err != nil {
+		return
+	}
+	matches, _ := filepath.Glob(current + ".old-*")
+	for _, path := range append(matches, current+".new") {
+		_ = os.Remove(path)
+	}
 }
 
 func replaceWindowsFile(source, destination string) error {

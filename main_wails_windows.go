@@ -75,6 +75,7 @@ func main() {
 	if runUpdateHelperIfRequested() {
 		return
 	}
+	cleanupUpdateLeftovers()
 	app := &BridgeApp{cloudModels: make(map[string][]string), status: "准备就绪"}
 	err := wails.Run(&options.App{
 		Title:            appTitle,

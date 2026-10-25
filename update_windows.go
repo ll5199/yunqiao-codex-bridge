@@ -322,7 +322,9 @@ func scheduleBridgeReplacement(staged, version string) error {
 	updates := filepath.Join(applicationDirectory(), "updates")
 	backup := filepath.Join(updates, "YunqiaoCodexBridge-v"+appVersion+".backup.exe")
 	helper := filepath.Join(updates, "YunqiaoBridgeUpdater-v"+version+".exe")
-	if err := copyFile(current, helper); err != nil {
+	// Run the helper from the new, already verified version, so fixes to the
+	// install step apply to this update instead of the next one.
+	if err := copyFile(staged, helper); err != nil {
 		return fmt.Errorf("创建更新助手失败：%w", err)
 	}
 	logPath := filepath.Join(updates, "update-v"+version+".log")
