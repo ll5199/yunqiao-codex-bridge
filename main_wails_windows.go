@@ -473,27 +473,36 @@ func (app *BridgeApp) CheckUpdates() (updateViewState, error) {
 func (app *BridgeApp) InstallUpdate() (string, error) {
 	app.opMu.Lock()
 	defer app.opMu.Unlock()
+	app.emitUpdate("checking", 0, "正在检查更新…")
 	manifest, err := fetchBridgeUpdateManifest()
 	if err != nil {
+		app.emitUpdate("error", 0, "检查更新失败："+err.Error())
 		return "", err
 	}
 	if compareVersions(manifest.Version, appVersion) <= 0 {
+		app.emitUpdate("idle", 0, "当前已是最新版。")
 		return "当前已是最新版。", nil
 	}
-	app.setStatus("正在下载更新…")
+	app.emitUpdate("downloading", 0, fmt.Sprintf("正在下载 v%s…", manifest.Version))
 	staged, err := downloadBridgeUpdate(manifest, func(percent int) {
-		app.setStatus(fmt.Sprintf("正在下载更新… %d%%", percent))
+		// Downloading fills the bar up to 90%; verification and install follow.
+		app.emitUpdate("downloading", percent*90/100, fmt.Sprintf("正在下载 v%s…", manifest.Version))
 	})
 	if err != nil {
+		app.emitUpdate("error", 0, "下载更新失败："+err.Error())
 		return "", err
 	}
+	app.emitUpdate("verifying", 93, "正在校验更新文件（SHA-256）…")
 	if err := verifyFileSHA256(staged, manifest.SHA256); err != nil {
+		app.emitUpdate("error", 0, err.Error())
 		return "", err
 	}
+	app.emitUpdate("installing", 97, "正在准备安装…")
 	if err := scheduleBridgeReplacement(staged, manifest.Version); err != nil {
+		app.emitUpdate("error", 0, "安装更新失败："+err.Error())
 		return "", err
 	}
-	app.setStatus("更新已通过 SHA-256 校验，正在安装并重启…")
+	app.emitUpdate("restarting", 100, "更新已通过校验，正在安装并重启…")
 	stopActiveProxy()
 	wailsruntime.Quit(app.context())
 	return "更新已开始安装。", nil
@@ -539,6 +548,24 @@ func (app *BridgeApp) context() context.Context {
 	app.mu.Lock()
 	defer app.mu.Unlock()
 	return app.ctx
+}
+
+// updateProgress drives the update panel: stage is checking, downloading,
+// verifying, installing, restarting, idle or error; percent is 0-100.
+type updateProgress struct {
+	Stage   string `json:"stage"`
+	Percent int    `json:"percent"`
+	Message string `json:"message"`
+}
+
+func (app *BridgeApp) emitUpdate(stage string, percent int, message string) {
+	app.setStatus(message)
+	app.mu.Lock()
+	ctx := app.ctx
+	app.mu.Unlock()
+	if ctx != nil {
+		wailsruntime.EventsEmit(ctx, "bridge:update", updateProgress{Stage: stage, Percent: percent, Message: message})
+	}
 }
 
 func (app *BridgeApp) setStatus(status string) {

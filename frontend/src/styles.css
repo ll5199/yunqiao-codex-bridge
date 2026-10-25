@@ -108,3 +108,15 @@ h2 { margin: 0; font-size: 16px; font-weight: 700; color: #16312b; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
 }
+
+.update-panel { display: flex; flex-direction: column; gap: 10px; margin: 0 0 14px; padding: 14px 16px; border: 1px solid #cfe3d6; border-radius: 12px; background: #f3faf5; }
+.update-panel.error { border-color: #f0c7c2; background: #fdf3f2; }
+.update-panel.error strong { color: #a23b2f; }
+.update-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 13px; }
+.update-row span { color: #146541; font-weight: 700; font-variant-numeric: tabular-nums; }
+.update-progress { height: 8px; overflow: hidden; border-radius: 999px; background: #dce9e0; }
+.update-progress span { display: block; height: 100%; border-radius: inherit; background: #1d7a4f; transition: width .25s ease; }
+.update-notes { margin: 0; max-height: 96px; overflow: auto; color: #4f6156; font-size: 12px; line-height: 1.6; white-space: pre-wrap; }
+.update-button { align-self: flex-start; border: 0; border-radius: 9px; padding: 9px 16px; color: #fff; background: #1d7a4f; font-size: 13px; font-weight: 700; cursor: pointer; }
+.update-button:disabled { opacity: .6; cursor: default; }
+.update-banner { position: fixed; top: 74px; left: 50%; z-index: 9; transform: translateX(-50%); width: min(440px, calc(100vw - 48px)); display: flex; flex-direction: column; gap: 9px; padding: 13px 16px; border: 1px solid #cfe3d6; border-radius: 12px; color: inherit; background: #fff; box-shadow: 0 10px 30px #11282024; text-align: left; cursor: pointer; }

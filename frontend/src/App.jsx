@@ -5,6 +5,8 @@ const connections = { api: "外部 API", bridge: "云桥账号", official: "官�
 const autoModel = "yunqiao-auto";
 const emptyCloud = { loggedIn: false, providers: [], usage: [] };
 const backend = () => window.go?.main?.BridgeApp;
+const activeUpdateStages = ["checking", "downloading", "verifying", "installing", "restarting"];
+const idleUpdate = { stage: "idle", percent: 0, message: "", latest: "", notes: "" };
 
 export function App() {
   const [connection, setConnection] = useState("api");
@@ -30,6 +32,8 @@ export function App() {
   const [provider, setProvider] = useState("");
   const [runtimeState, setRuntimeState] = useState({ running: false, proxyRunning: false });
   const [version, setVersion] = useState("1.6.5");
+  const [update, setUpdate] = useState(idleUpdate);
+  const updating = activeUpdateStages.includes(update.stage);
 
   function showError(error) {
     const message = error?.message || String(error || "操作失败");
@@ -38,7 +42,9 @@ export function App() {
   }
 
   useEffect(() => {
-    const unsubscribe = window.runtime?.EventsOn?.("bridge:status", setStatus);
+    const unsubscribeStatus = window.runtime?.EventsOn?.("bridge:status", setStatus);
+    const unsubscribeUpdate = window.runtime?.EventsOn?.("bridge:update", (progress) => setUpdate((current) => ({ ...current, ...progress })));
+    const unsubscribe = () => { unsubscribeStatus?.(); unsubscribeUpdate?.(); };
     const app = backend();
     if (!app) {
       setStatus("客户端服务尚未就绪");
@@ -193,23 +199,37 @@ export function App() {
   async function checkUpdates() {
     const app = backend();
     if (!app) return showError(new Error("客户端服务尚未启动"));
-    setBusy(true);
     setNotice("");
+    setUpdate({ ...idleUpdate, stage: "checking", message: "正在检查更新…" });
     try {
       const result = await app.CheckUpdates();
-      if (!result.available) return setStatus("云桥客户端 v" + result.current + " 已是最新版。");
-      if (window.confirm("发现 v" + result.latest + " 更新（当前 v" + result.current + "）。\n\n" + (result.notes || "") + "\n\n是否下载并安装？")) {
-        await app.InstallUpdate();
-      } else {
-        setStatus("已取消更新。");
+      if (!result.available) {
+        setUpdate({ ...idleUpdate, stage: "latest", message: "已是最新版 v" + result.current });
+        return setStatus("云桥客户端 v" + result.current + " 已是最新版。");
       }
+      setUpdate({ ...idleUpdate, stage: "available", latest: result.latest, notes: result.notes || "", message: "发现新版本 v" + result.latest });
     } catch (error) {
+      setUpdate({ ...idleUpdate, stage: "error", message: "检查更新失败：" + (error?.message || error) });
+      showError(error);
+    }
+  }
+
+  async function installUpdate() {
+    const app = backend();
+    if (!app) return showError(new Error("客户端服务尚未启动"));
+    setBusy(true);
+    setUpdate((current) => ({ ...current, stage: "downloading", percent: 0, message: "正在准备下载…" }));
+    try {
+      await app.InstallUpdate();
+    } catch (error) {
+      setUpdate((current) => ({ ...current, stage: "error", message: "更新失败：" + (error?.message || error) }));
       showError(error);
     } finally {
       setBusy(false);
     }
   }
 
+  const updateBar = <div className="update-progress" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={update.percent}><span style={{ width: Math.max(3, update.percent) + "%" }} /></div>;
 
   const fetched = connection === "api" ? apiModels : connection === "bridge" ? providerModels : [];
   const modelOptions = fetched.length ? [autoModel, ...fetched.filter((item) => item !== autoModel)] : [];
@@ -259,12 +279,23 @@ export function App() {
     {showSettings && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setShowSettings(false); }}>
       <section className="settings-modal" role="dialog" aria-modal="true" aria-labelledby="settings-heading">
         <div className="modal-heading"><h2 id="settings-heading">客户端设置</h2><button className="icon-button" aria-label="关闭设置" onClick={() => setShowSettings(false)}><X size={20} /></button></div>
-        <div className="setting-item"><div><strong>客户端版本</strong><span>当前版本 v{version}</span></div><button className="text-button" onClick={checkUpdates} disabled={busy}>检查更新</button></div>
+        <div className="setting-item"><div><strong>客户端版本</strong><span>当前版本 v{version}</span></div><button className="text-button" onClick={checkUpdates} disabled={busy || updating}>{update.stage === "checking" ? "正在检查…" : "检查更新"}</button></div>
+        {update.stage !== "idle" && <div className={"update-panel " + update.stage}>
+          <div className="update-row"><strong>{update.message}</strong>{updating && update.stage !== "checking" && <span>{update.percent}%</span>}</div>
+          {updating && update.stage !== "checking" && updateBar}
+          {update.stage === "available" && <>{update.notes && <p className="update-notes">{update.notes}</p>}<button className="update-button" onClick={installUpdate} disabled={busy}>立即更新到 v{update.latest}</button></>}
+          {update.stage === "restarting" && <p className="update-notes">客户端将自动关闭并重新打开，请稍候。</p>}
+          {update.stage === "error" && <button className="text-button" onClick={checkUpdates}>重试</button>}
+        </div>}
         <div className="setting-item"><div><strong>诊断日志</strong><span>导出启动和更新记录，自动隐藏凭据</span></div><button className="text-button" onClick={exportDiagnostics}>导出诊断</button></div>
         <div className="setting-item"><div><strong>本机连接</strong><span>代理仅在本机运行，退出客户端后停止</span></div></div>
         <div className="setting-item"><div><strong>API Key 保护</strong><span>使用 Windows DPAPI 加密保存在本机</span></div></div>
       </section>
     </div>}
+    {updating && !showSettings && <button type="button" className="update-banner" onClick={() => setShowSettings(true)}>
+      <div className="update-row"><strong>{update.message}</strong><span>{update.stage === "checking" ? "" : update.percent + "%"}</span></div>
+      {update.stage !== "checking" && updateBar}
+    </button>}
     {notice && <div className="toast" role="alert">{notice}<button type="button" aria-label="关闭提示" onClick={() => setNotice("")}><X size={15} /></button></div>}
   </div>;
 }
