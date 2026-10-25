@@ -74,7 +74,15 @@ func startBridgeUpdate() {
 }
 
 func fetchBridgeUpdateManifest() (bridgeUpdateManifest, error) {
-	sources := updateManifestSources(readRememberedUpdateSource())
+	var configured []string
+	if body, err := fetchUpdateManifestBody(updateConfigURL); err == nil {
+		if configured, err = parseUpdateConfig(body); err != nil {
+			diagnosticLog("update.config_invalid", err.Error())
+		}
+	} else {
+		diagnosticLog("update.config_unavailable", err.Error())
+	}
+	sources := updateManifestSources(configured, readRememberedUpdateSource())
 	var manifest bridgeUpdateManifest
 	var source string
 	var err error
