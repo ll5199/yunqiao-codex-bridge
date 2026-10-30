@@ -170,6 +170,20 @@ func (app *BridgeApp) FetchModels(baseURL, apiKey string) (modelFetchResult, err
 	return modelFetchResult{BaseURL: resolved, Models: models}, nil
 }
 
+// GetUsage returns the saved API key's balance and spend for the usage strip.
+func (app *BridgeApp) GetUsage() (keyUsage, error) {
+	app.mu.Lock()
+	baseURL, apiKey := app.baseURL, app.apiKey
+	app.mu.Unlock()
+	if strings.TrimSpace(apiKey) == "" {
+		return keyUsage{}, errors.New("尚未保存 API Key")
+	}
+	if baseURL == "" {
+		baseURL = defaultBaseURL
+	}
+	return fetchKeyUsage(baseURL, apiKey)
+}
+
 func (app *BridgeApp) SaveConnection(baseURL, apiKey, selectedModel string) (bridgeViewState, error) {
 	app.opMu.Lock()
 	defer app.opMu.Unlock()

@@ -7,6 +7,57 @@ const emptyCloud = { loggedIn: false, providers: [], usage: [] };
 const backend = () => window.go?.main?.BridgeApp;
 const activeUpdateStages = ["checking", "downloading", "verifying", "installing", "restarting"];
 const idleUpdate = { stage: "idle", percent: 0, message: "", latest: "", notes: "" };
+// The 云桥账号 login stays implemented but is hidden from the connection picker.
+const hiddenConnections = ["bridge"];
+const lowBalance = 2;
+const usageRefreshMs = 5 * 60 * 1000;
+const money = (value, unit = "USD") => (unit === "USD" ? "$" : "") + Number(value || 0).toFixed(2) + (unit === "USD" ? "" : " " + unit);
+const tokenCount = (value) => value >= 1e8 ? (value / 1e8).toFixed(2) + " 亿" : value >= 1e4 ? Math.round(value / 1e4) + " 万" : String(value || 0);
+const clockTime = (ms) => new Date(ms).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
+
+function lastDays(daily, count) {
+  const byDate = Object.fromEntries((daily || []).map((day) => [day.date, day]));
+  const today = new Date();
+  return Array.from({ length: count }, (_, index) => {
+    const date = new Date(today.getFullYear(), today.getMonth(), today.getDate() - count + 1 + index);
+    const key = date.getFullYear() + "-" + String(date.getMonth() + 1).padStart(2, "0") + "-" + String(date.getDate()).padStart(2, "0");
+    const hit = byDate[key];
+    return { key, label: date.getMonth() + 1 + "/" + date.getDate(), cost: hit?.cost || 0, requests: hit?.requests || 0 };
+  });
+}
+
+function UsageDetail({ usage, onClose }) {
+  const [hover, setHover] = useState(null);
+  const days = lastDays(usage.daily, 30);
+  const peakCost = Math.max(0, ...days.map((day) => day.cost));
+  const scale = peakCost * 1.15 || 1;
+  const recentCost = days.reduce((sum, day) => sum + day.cost, 0);
+  const models = usage.models || [];
+  const topCost = Math.max(0, ...models.map((item) => item.cost)) || 1;
+  const modelTotal = models.reduce((sum, item) => sum + item.cost, 0) || 1;
+  return <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+    <section className="usage-modal" role="dialog" aria-modal="true" aria-labelledby="usage-heading">
+      <div className="modal-heading"><h2 id="usage-heading">用量明细</h2><button className="icon-button" aria-label="关闭明细" onClick={onClose}><X size={20} /></button></div>
+      <div className="usage-tiles">
+        <div><span>账户余额</span><strong>{usage.hasBalance ? money(usage.balance, usage.unit) : "—"}</strong><small>{usage.plan || "当前 API Key"}</small></div>
+        <div><span>今日消耗</span><strong>{money(usage.todayCost, usage.unit)}</strong><small>{usage.todayRequests} 次请求</small></div>
+        <div><span>近 30 天</span><strong>{money(recentCost, usage.unit)}</strong><small>{days.reduce((sum, day) => sum + day.requests, 0)} 次请求</small></div>
+        <div><span>累计消耗</span><strong>{money(usage.totalCost, usage.unit)}</strong><small>{usage.totalRequests} 次 · {tokenCount(usage.totalTokens)} tokens</small></div>
+      </div>
+      <div className="usage-block"><div className="usage-block-head"><strong>每日消耗</strong><span>近 30 天</span><em>最高 {money(peakCost, usage.unit)}</em></div>
+        <div className="day-chart" role="img" aria-label="近 30 天每日消耗" onMouseLeave={() => setHover(null)}>
+          {days.map((day, index) => <div key={day.key} className="day-col" onMouseEnter={() => setHover(index)}><span className="day-bar" style={{ height: day.cost ? Math.max(3, day.cost / scale * 100) + "%" : 0 }} /></div>)}
+          {hover !== null && <div className="day-tip" style={{ left: (hover + 0.5) / days.length * 100 + "%" }}><b>{days[hover].label}</b>{money(days[hover].cost, usage.unit)} · {days[hover].requests} 次</div>}
+        </div>
+        <div className="day-axis"><span>{days[0].label}</span><span>{days[15].label}</span><span>{days[29].label}</span></div>
+      </div>
+      <div className="usage-block"><div className="usage-block-head"><strong>按模型</strong><span>累计 · 占比</span></div>
+        {models.length ? models.map((item) => <div className="model-row" key={item.model}><span className="model-name" title={item.model}>{item.model}</span><span className="model-track"><span style={{ width: Math.max(1, item.cost / topCost * 100) + "%" }} /></span><span className="model-cost">{money(item.cost, usage.unit)}</span><span className="model-share">{(item.cost / modelTotal * 100).toFixed(1)}% · {item.requests} 次</span></div>) : <p className="usage-note">暂无模型用量</p>}
+      </div>
+      <p className="usage-note">数据来自当前 API Key 的用量接口，每 5 分钟刷新 · 更新于 {clockTime(usage.updatedAt)}</p>
+    </section>
+  </div>;
+}
 
 export function App() {
   const [connection, setConnection] = useState("api");
@@ -33,6 +84,8 @@ export function App() {
   const [runtimeState, setRuntimeState] = useState({ running: false, proxyRunning: false });
   const [version, setVersion] = useState("1.6.5");
   const [update, setUpdate] = useState(idleUpdate);
+  const [usage, setUsage] = useState(null);
+  const [showUsage, setShowUsage] = useState(false);
   const updating = activeUpdateStages.includes(update.stage);
 
   function showError(error) {
@@ -93,6 +146,21 @@ export function App() {
     catch (error) { showError(error); }
   }
 
+  async function refreshUsage() {
+    try {
+      setUsage(await backend()?.GetUsage?.() || null);
+    } catch {
+      setUsage(null);
+    }
+  }
+
+  useEffect(() => {
+    if (!hasKey) return undefined;
+    void refreshUsage();
+    const timer = setInterval(refreshUsage, usageRefreshMs);
+    return () => clearInterval(timer);
+  }, [hasKey, apiUrl]);
+
   function chooseConnection(next) {
     setConnection(next);
     setNotice("");
@@ -116,6 +184,7 @@ export function App() {
       setApiKey("");
       setSaved(true);
       setStatus("Key 已加密保存，已同步 " + found.filter((item) => item !== autoModel).length + " 个模型。");
+      void refreshUsage();
     } catch (error) {
       showError(error);
     } finally {
@@ -176,6 +245,7 @@ export function App() {
     launchLocked.current = true;
     setLaunching(true);
     setStatus("正在启动 Codex…");
+    if (connection === "api") void refreshUsage();
     try {
       const result = await app.Launch(connection, provider, model, apiUrl, apiKey);
       const state = await app.GetState();
@@ -248,7 +318,7 @@ export function App() {
       <section className="work-section" aria-labelledby="connection-heading">
         <h2 id="connection-heading">连接类型</h2>
         <div className="connection-options" role="group" aria-label="连接类型">
-          {Object.entries(connections).map(([key, label]) => <button key={key} type="button" className={"connection-option " + (connection === key ? "selected" : "")} aria-pressed={connection === key} onClick={() => chooseConnection(key)}>{key === "api" ? <Link2 size={20} /> : key === "bridge" ? <UserRound size={20} /> : <ShieldCheck size={20} />}{label}</button>)}
+          {Object.entries(connections).filter(([key]) => !hiddenConnections.includes(key) || key === connection).map(([key, label]) => <button key={key} type="button" className={"connection-option " + (connection === key ? "selected" : "")} aria-pressed={connection === key} onClick={() => chooseConnection(key)}>{key === "api" ? <Link2 size={20} /> : key === "bridge" ? <UserRound size={20} /> : <ShieldCheck size={20} />}{label}</button>)}
         </div>
       </section>
 
@@ -257,6 +327,12 @@ export function App() {
           <div className="field-row"><label htmlFor="api-url">接口地址</label><input id="api-url" type="url" autoComplete="off" value={apiUrl} onChange={(event) => { setApiUrl(event.target.value); setSaved(false); }} placeholder="https://api.velyn65.com/v1" /></div>
           <div className="field-row"><label htmlFor="api-key">API Key</label><div className="key-input"><input id="api-key" type={showKey ? "text" : "password"} autoComplete="off" spellCheck="false" value={apiKey} onChange={(event) => { setApiKey(event.target.value); setSaved(false); }} placeholder={hasKey ? "已加密保存，留空继续使用" : "输入 API Key"} /><button type="button" className="eye-button" aria-label={showKey ? "隐藏 Key" : "显示 Key"} onClick={() => setShowKey(!showKey)}>{showKey ? <EyeOff size={17} /> : <Eye size={17} />}</button></div></div>
           <button type="button" className="save-button" onClick={saveConnection} disabled={busy}>{busy ? "正在同步…" : "保存并同步模型"}</button>
+        </div>}
+        {connection === "api" && usage && <div className={"usage-strip" + (usage.hasBalance && usage.balance < lowBalance ? " low" : "")}>
+          <div><span>账户余额</span><strong>{usage.hasBalance ? money(usage.balance, usage.unit) : "—"}</strong><small>{usage.hasBalance && usage.balance < lowBalance ? "余额不足 $" + lowBalance + "，请及时充值" : usage.plan || "当前 API Key"}</small></div>
+          <div><span>今日消耗</span><strong>{money(usage.todayCost, usage.unit)}</strong><small>{usage.todayRequests} 次请求</small></div>
+          <div><span>累计消耗</span><strong>{money(usage.totalCost, usage.unit)}</strong><small>{usage.totalRequests} 次 · {tokenCount(usage.totalTokens)} tokens</small></div>
+          <button type="button" className="text-button" onClick={() => setShowUsage(true)}>明细</button>
         </div>}
         {connection === "bridge" && (!cloud.loggedIn ? <div className="cloud-fields"><div className="field-row"><label htmlFor="cloud-email">云桥账号</label><input id="cloud-email" type="email" autoComplete="username" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="邮箱" /></div><div className="field-row"><label htmlFor="cloud-password">密码</label><input id="cloud-password" type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="密码" /></div><button className="save-button" onClick={loginCloud} disabled={busy}>{busy ? "正在登录…" : "登录并同步模型"}</button></div> : <div className="cloud-connected"><div><strong>{cloud.identity || "云桥账号已连接"}</strong><span>{cloud.groups || "已读取订阅"}</span></div><div className="provider-options" role="group" aria-label="选择上游">{(cloud.providers || []).map((item) => <button key={item} className={"provider " + (provider === item ? "selected" : "")} aria-pressed={provider === item} onClick={() => selectProvider(item)}>{item}</button>)}</div><button className="text-button" onClick={logoutCloud}>退出登录</button></div>)}
         {connection === "official" && <div className="official-info"><ShieldCheck size={21} /><span>使用官方账号启动；请在 Codex 中登录 ChatGPT。</span></div>}
@@ -296,6 +372,7 @@ export function App() {
       <div className="update-row"><strong>{update.message}</strong><span>{update.stage === "checking" ? "" : update.percent + "%"}</span></div>
       {update.stage !== "checking" && updateBar}
     </button>}
+    {showUsage && usage && <UsageDetail usage={usage} onClose={() => setShowUsage(false)} />}
     {notice && <div className="toast" role="alert">{notice}<button type="button" aria-label="关闭提示" onClick={() => setNotice("")}><X size={15} /></button></div>}
   </div>;
 }
