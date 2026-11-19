@@ -62,12 +62,20 @@ type nativeMenuState struct {
 func rendererExpression(models []string, defaultModel string) string {
 	modelJSON, _ := json.Marshal(models)
 	defaultJSON, _ := json.Marshal(defaultModel)
-	return "window.__YUNQIAO_LOCALIZATION_ONLY__=false;window.__YUNQIAO_INJECT_MODELS__=" + string(modelJSON) +
+	return "window.__YUNQIAO_NATIVE_CATALOG__=false;window.__YUNQIAO_LOCALIZATION_ONLY__=false;window.__YUNQIAO_INJECT_MODELS__=" + string(modelJSON) +
 		";window.__YUNQIAO_INJECT_DEFAULT__=" + string(defaultJSON) + ";\n" + rendererInjection
 }
 
 func localizationExpression() string {
-	return "window.__YUNQIAO_LOCALIZATION_ONLY__=true;window.__YUNQIAO_INJECT_MODELS__=[];window.__YUNQIAO_INJECT_DEFAULT__='';\n" + rendererInjection
+	return "window.__YUNQIAO_NATIVE_CATALOG__=false;window.__YUNQIAO_LOCALIZATION_ONLY__=true;window.__YUNQIAO_INJECT_MODELS__=[];window.__YUNQIAO_INJECT_DEFAULT__='';\n" + rendererInjection
+}
+
+func relayToolsExpression() string {
+	return "window.__YUNQIAO_NATIVE_CATALOG__=true;window.__YUNQIAO_LOCALIZATION_ONLY__=false;window.__YUNQIAO_INJECT_MODELS__=[];window.__YUNQIAO_INJECT_DEFAULT__='';\n" + rendererInjection
+}
+
+func injectRelayToolsIntoCodex(port int, progress func(string)) error {
+	return injectExpressionIntoCodex(port, relayToolsExpression(), "正在加载 Codex 汉化与辅助功能…", progress)
 }
 
 func injectIntoCodex(port int, models []string, defaultModel string, progress func(string)) error {
@@ -132,8 +140,10 @@ func maintainCodexInjection(port int, models []string, defaultModel string, done
 	if len(models) == 0 {
 		return
 	}
-	expression := rendererExpression(models, defaultModel)
-	healthExpression := rendererHealthExpression(len(models), defaultModel)
+	maintainRendererInjection(port, rendererExpression(models, defaultModel), rendererHealthExpression(len(models), defaultModel), done, logger)
+}
+
+func maintainRendererInjection(port int, expression, healthExpression string, done <-chan struct{}, logger func(string, string)) {
 	client := &http.Client{Timeout: 1500 * time.Millisecond}
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()

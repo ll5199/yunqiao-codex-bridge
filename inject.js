@@ -1,6 +1,7 @@
 (() => {
   const localizationOnly = window.__YUNQIAO_LOCALIZATION_ONLY__ === true;
-  const bridgeMode = localizationOnly ? "localization" : "relay";
+  const nativeCatalog = window.__YUNQIAO_NATIVE_CATALOG__ === true;
+  const bridgeMode = localizationOnly ? "localization" : nativeCatalog ? "native-catalog" : "relay";
   const incoming = Array.isArray(window.__YUNQIAO_INJECT_MODELS__)
     ? window.__YUNQIAO_INJECT_MODELS__.filter((x) => typeof x === "string" && x.trim()).map((x) => x.trim())
     : [];
@@ -935,7 +936,7 @@
     }
   }
 
-  if (typeof Response !== "undefined" && typeof Response.prototype.json === "function" && !Response.prototype.__yunqiaoOriginalJson) {
+  if (!nativeCatalog && typeof Response !== "undefined" && typeof Response.prototype.json === "function" && !Response.prototype.__yunqiaoOriginalJson) {
     const original = Response.prototype.json;
     const patched = async function (...args) {
       const payload = await original.apply(this, args);
@@ -950,7 +951,7 @@
   }
 
   const requestIds = window.__yunqiaoModelListRequestIds = window.__yunqiaoModelListRequestIds || new Set();
-  if (!window.__yunqiaoModelMessagePatchInstalled) {
+  if (!nativeCatalog && !window.__yunqiaoModelMessagePatchInstalled) {
     window.__yunqiaoModelMessagePatchInstalled = true;
     window.addEventListener("codex-message-from-view", (event) => {
       try {
@@ -1153,12 +1154,12 @@
       }
       lastConversationKey = activeKey;
       refreshChineseLocale?.();
-      patchStatsig();
+      if (!nativeCatalog) patchStatsig();
       cleanupSidebarArtifacts();
       void pollRequestActivity();
       void pollProxyImages();
       renderCapturedImages();
-      void patchAppServer();
+      if (!nativeCatalog) void patchAppServer();
       window.__yunqiaoCodexBridgeStatus = {
         installed: true,
         models: names().length,

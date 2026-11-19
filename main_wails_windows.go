@@ -349,8 +349,8 @@ func (app *BridgeApp) launchWithCredentials(baseURL, apiKey string, models []str
 		}
 	}()
 
-	app.setStatus("正在准备 Codex 供应商配置…")
-	if err := writeCodexProviderConfig(codexProxyBase, selectedModel); err != nil {
+	app.setStatus("正在写入 Codex 模型目录与供应商配置…")
+	if err := writeCodexProviderConfig(codexProxyBase, selectedModel, models); err != nil {
 		return "", err
 	}
 	install, err := findCodexInstallation()
@@ -364,7 +364,7 @@ func (app *BridgeApp) launchWithCredentials(baseURL, apiKey string, models []str
 	menuResult := make(chan error, 1)
 	go func() { menuResult <- localizeNativeMenu(inspectorPort) }()
 	keepProxy = true
-	injectErr := injectIntoCodex(cdpPort, models, selectedModel, func(s string) { app.setStatus(s) })
+	injectErr := injectRelayToolsIntoCodex(cdpPort, func(s string) { app.setStatus(s) })
 	if injectErr != nil {
 		diagnosticLog("launch.injection_failed", injectErr.Error())
 		if !codexIsRunning() {
@@ -373,9 +373,9 @@ func (app *BridgeApp) launchWithCredentials(baseURL, apiKey string, models []str
 		}
 	}
 	go syncProxyImagesToCodex(cdpPort, proxy)
-	go maintainCodexInjection(cdpPort, models, selectedModel, proxy.done, diagnosticLog)
+	go maintainRendererInjection(cdpPort, relayToolsExpression(), rendererHealthExpression(0, ""), proxy.done, diagnosticLog)
 	if injectErr != nil {
-		message := "Codex 已打开，本机代理运行中；模型列表与汉化未就绪，请导出诊断日志。"
+		message := "Codex 已打开，本机代理运行中；模型目录已写入，汉化与辅助功能未确认，请导出诊断日志。"
 		app.setStatus(message)
 		return message, nil
 	}
@@ -389,9 +389,9 @@ func (app *BridgeApp) launchWithCredentials(baseURL, apiKey string, models []str
 		}
 		menuResult = make(chan error, 1)
 		go func() { menuResult <- localizeNativeMenu(inspectorPort) }()
-		if err := injectIntoCodex(cdpPort, models, selectedModel, func(s string) { app.setStatus(s) }); err != nil {
+		if err := injectRelayToolsIntoCodex(cdpPort, func(s string) { app.setStatus(s) }); err != nil {
 			diagnosticLog("launch.reinjection_failed", err.Error())
-			message := "Codex 已重启，代理运行中；重新注入未就绪。"
+			message := "Codex 已重启，代理运行中；模型目录已写入，汉化与辅助功能未确认。"
 			app.setStatus(message)
 			return message, nil
 		}
@@ -400,18 +400,18 @@ func (app *BridgeApp) launchWithCredentials(baseURL, apiKey string, models []str
 	menuErr := <-menuResult
 	if localeErr != nil {
 		diagnosticLog("locale.localization_failed", localeErr.Error())
-		message := fmt.Sprintf("代理与模型已启动，但中文界面未确认；详情见 %s", diagnosticLogPath())
+		message := fmt.Sprintf("代理已启动，模型目录已写入，但中文界面未确认；详情见 %s", diagnosticLogPath())
 		app.setStatus(message)
 		return message, nil
 	}
 	if menuErr != nil {
 		diagnosticLog("menu.localization_failed", menuErr.Error())
-		message := fmt.Sprintf("代理与模型已启动，但原生菜单汉化失败；详情见 %s", diagnosticLogPath())
+		message := fmt.Sprintf("代理已启动，模型目录已写入，但原生菜单汉化失败；详情见 %s", diagnosticLogPath())
 		app.setStatus(message)
 		return message, nil
 	}
-	diagnosticLog("launch.ready", fmt.Sprintf("models=%d", len(models)))
-	message := fmt.Sprintf("启动成功：中文界面与 %d 个模型已就绪。请保持云桥客户端运行。", len(models))
+	diagnosticLog("launch.ready", fmt.Sprintf("catalog_entries=%d", len(models)))
+	message := fmt.Sprintf("启动成功：已写入 %d 个模型的目录，中文界面已就绪。请保持云桥客户端运行。", len(models))
 	app.setStatus(message)
 	return message, nil
 }

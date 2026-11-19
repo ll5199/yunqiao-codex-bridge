@@ -475,7 +475,7 @@ func createControls(hwnd uintptr) {
 	updateButton = createControl(hwnd, "BUTTON", "检查云桥更新", wsChild|wsVisible|wsTabStop, 570, 304, 148, 38, controlUpdate)
 	modelsLabel = createLabel(hwnd, "API 返回的模型", 28, 366, 180, 24, font)
 	authCheckbox = createControl(hwnd, "BUTTON", "保留 ChatGPT 登录（浏览器扩展）", wsChild|wsVisible|wsTabStop|bsAutoCheckBox, 210, 366, 505, 24, 0)
-	procSendMessageW.Call(authCheckbox, bmSetCheck, boolToUintptr(chatGPTAuthPreference(currentConfig.PreserveChatGPTAuth)), 0)
+	procSendMessageW.Call(authCheckbox, bmSetCheck, boolToUintptr(chatGPTAuthPreference(currentConfig.PreserveChatGPTAuth), models), 0)
 	modelList = createControl(hwnd, "LISTBOX", "", wsChild|wsVisible|wsBorder|wsVScroll|lbsNotify, 28, 392, 690, 220, 0)
 	statusTitle = createLabel(hwnd, "运行状态", 28, 636, 100, 22, font)
 	statusLabel = createControl(hwnd, "EDIT", "填写接口和 Key 后点击“获取模型”。", wsChild|wsVisible|wsBorder|esAutoHScroll|esReadOnly, 28, 662, 690, 32, 0)
@@ -1264,11 +1264,11 @@ func decryptText(encoded string) (string, error) {
 	return string(plain), nil
 }
 
-func writeCodexProviderConfig(baseURL, model string) error {
+func writeCodexProviderConfig(baseURL, model string, models []string) error {
 	return writeCodexProviderConfigWithPreference(baseURL, model, chatGPTAuthPreference(currentConfig.PreserveChatGPTAuth))
 }
 
-func writeCodexProviderConfigWithPreference(baseURL, model string, preserveAuth bool) error {
+func writeCodexProviderConfigWithPreference(baseURL, model string, preserveAuth bool, modelLists ...[]string) error {
 	codexHome, err := effectiveCodexHome()
 	if err != nil {
 		return err
@@ -1281,12 +1281,23 @@ func writeCodexProviderConfigWithPreference(baseURL, model string, preserveAuth 
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("读取 Codex 配置失败：%w", err)
 	}
+	var catalogPaths []string
+	if len(modelLists) > 0 {
+		if err := checkBridgeCatalogConflict(string(existing)); err != nil {
+			return err
+		}
+		catalogPath, err := writeBridgeModelCatalog(codexHome, modelLists[0], model)
+		if err != nil {
+			return fmt.Errorf("准备 Codex 模型目录失败：%w", err)
+		}
+		catalogPaths = append(catalogPaths, catalogPath)
+	}
 	if len(existing) > 0 {
 		if err := backupCodexConfig(existing); err != nil {
 			return err
 		}
 	}
-	updated := updateCodexConfigWithAuth(string(existing), baseURL, model, preserveAuth)
+	updated := updateCodexConfigWithAuth(string(existing), baseURL, model, preserveAuth, catalogPaths...)
 	if err := os.WriteFile(configPath, []byte(updated), 0600); err != nil {
 		return fmt.Errorf("写入 %s 失败：%w", configPath, err)
 	}

@@ -17,7 +17,7 @@ import (
 const (
 	defaultBaseURL = "https://api.velyn65.com/v1"
 	providerID     = "yunqiao_bridge"
-	appVersion     = "1.6.11"
+	appVersion     = "1.6.12"
 )
 
 type appConfig struct {
@@ -209,7 +209,7 @@ func updateCodexConfig(existing, baseURL, model string) string {
 	return updateCodexConfigWithAuth(existing, baseURL, model, bridgeRequiresAuth(existing))
 }
 
-func updateCodexConfigWithAuth(existing, baseURL, model string, preserveAuth bool) string {
+func updateCodexConfigWithAuth(existing, baseURL, model string, preserveAuth bool, catalogPath ...string) string {
 	const beginMarker = "# BEGIN YUNQIAO CODEX BRIDGE"
 	const endMarker = "# END YUNQIAO CODEX BRIDGE"
 
@@ -260,6 +260,10 @@ func updateCodexConfigWithAuth(existing, baseURL, model string, preserveAuth boo
 		"model = " + strconv.Quote(model),
 		"model_provider = " + strconv.Quote(providerID),
 		endMarker,
+	}
+	if len(catalogPath) > 0 {
+		top[len(top)-1] = "model_catalog_json = " + strconv.Quote(catalogPath[0])
+		top = append(top, endMarker)
 	}
 	provider := []string{
 		beginMarker,
