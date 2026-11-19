@@ -475,7 +475,7 @@ func createControls(hwnd uintptr) {
 	updateButton = createControl(hwnd, "BUTTON", "检查云桥更新", wsChild|wsVisible|wsTabStop, 570, 304, 148, 38, controlUpdate)
 	modelsLabel = createLabel(hwnd, "API 返回的模型", 28, 366, 180, 24, font)
 	authCheckbox = createControl(hwnd, "BUTTON", "保留 ChatGPT 登录（浏览器扩展）", wsChild|wsVisible|wsTabStop|bsAutoCheckBox, 210, 366, 505, 24, 0)
-	procSendMessageW.Call(authCheckbox, bmSetCheck, boolToUintptr(chatGPTAuthPreference(currentConfig.PreserveChatGPTAuth), models), 0)
+	procSendMessageW.Call(authCheckbox, bmSetCheck, boolToUintptr(chatGPTAuthPreference(currentConfig.PreserveChatGPTAuth)), 0)
 	modelList = createControl(hwnd, "LISTBOX", "", wsChild|wsVisible|wsBorder|wsVScroll|lbsNotify, 28, 392, 690, 220, 0)
 	statusTitle = createLabel(hwnd, "运行状态", 28, 636, 100, 22, font)
 	statusLabel = createControl(hwnd, "EDIT", "填写接口和 Key 后点击“获取模型”。", wsChild|wsVisible|wsBorder|esAutoHScroll|esReadOnly, 28, 662, 690, 32, 0)
@@ -1265,7 +1265,7 @@ func decryptText(encoded string) (string, error) {
 }
 
 func writeCodexProviderConfig(baseURL, model string, models []string) error {
-	return writeCodexProviderConfigWithPreference(baseURL, model, chatGPTAuthPreference(currentConfig.PreserveChatGPTAuth))
+	return writeCodexProviderConfigWithPreference(baseURL, model, chatGPTAuthPreference(currentConfig.PreserveChatGPTAuth), models)
 }
 
 func writeCodexProviderConfigWithPreference(baseURL, model string, preserveAuth bool, modelLists ...[]string) error {
